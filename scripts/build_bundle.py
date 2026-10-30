@@ -114,7 +114,7 @@ for (code, rest), oid in list(orgs.items()):
         heads[(code, rest)] = (None, 0, pid)
 # group-level positions
 T['positions'] += [
-  dict(id=uid('pos', 'group', 'corporate-planning'), org_unit_id=gso, unit_id=gso, title='Corporate Planning', level='group', role='super_admin', holder_name='Suhay', email='srflhb22@gmail.com', status='Filled', sort=0),
+  dict(id=uid('pos', 'group', 'corporate-planning'), org_unit_id=gso, unit_id=gso, title='Corporate Planning', level='group', role='super_admin', holder_name='Suhay', email='surafel.h@wagwagoelectric.com', status='Filled', sort=0),
   dict(id=uid('pos', 'group', 'cso'), org_unit_id=gso, unit_id=gso, title='Chief Strategy Officer', level='group', role='group_strategy', holder_name=None, status='Vacant', sort=1),
   dict(id=uid('pos', 'group', 'ceo'), org_unit_id=group_id, unit_id=None, title='Group CEO', level='group', role='executive', holder_name=None, status='Vacant', sort=2),
 ]
