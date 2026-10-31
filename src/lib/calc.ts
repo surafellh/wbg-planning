@@ -1,52 +1,59 @@
-/* Calculation rules (requirements doc §6): calendar, key-result progress,
-   objective and organisation scores, person results, plan maths, statements. */
-import type { DB } from './data';
+/* Calculation rules (requirements doc §6), version 2.
+   Everything is measured for a PERIOD — a month, quarter, half or the year — against that
+   period's target. Status is judged on pace: what share of the period has passed. */
+import type { DB, Row } from './data';
 
+export const FY = '2026/27';
 // ---------------- fiscal calendar ----------------
 // FY starts 8 July (Hamle 1). Months carry Gregorian names but start on the Ethiopian month.
 export const MONTHS = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
 export function fyStartYear(fy: string) { return parseInt(fy.slice(0, 4), 10); }
-/** Start date of fiscal month m (1..12). */
+/** Start date of fiscal month m (1..13; 13 = start of the next year). */
 export function monthStart(fy: string, m: number): Date {
   const y = fyStartYear(fy);
+  if (m >= 13) return monthStart(`${y + 1}/${String(y + 2).slice(2)}`, 1);
   if (m === 1) return new Date(Date.UTC(y, 6, 8));
   if (m === 2) return new Date(Date.UTC(y, 7, 7));
-  // Meskerem 1 = 11 Sep (12 Sep in the year before a Gregorian leap year)
-  const mesk = new Date(Date.UTC(y, 8, (y + 1) % 4 === 0 ? 12 : 11));
+  const mesk = new Date(Date.UTC(y, 8, (y + 1) % 4 === 0 ? 12 : 11)); // Meskerem 1
   return new Date(mesk.getTime() + (m - 3) * 30 * 864e5);
 }
-export function monthOf(fy: string, d: Date): number {
-  for (let m = 12; m >= 1; m--) if (d >= monthStart(fy, m)) return m;
-  return 1;
-}
+export function monthOf(fy: string, d: Date): number { for (let m = 12; m >= 1; m--) if (d >= monthStart(fy, m)) return m; return 1; }
 export const qOfMonth = (m: number) => Math.ceil(m / 3);
 export const qMonths = (q: number) => [q * 3 - 2, q * 3 - 1, q * 3];
 export function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 /** Saturday that starts the week containing d. */
-export function weekStart(d: Date) { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); const dow = x.getUTCDay(); const back = (dow + 1) % 7; return new Date(x.getTime() - back * 864e5); }
+export function weekStart(d: Date) { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); const back = (x.getUTCDay() + 1) % 7; return new Date(x.getTime() - back * 864e5); }
 /** Week number inside its fiscal month (restarts at 1 each month). */
-export function weekNo(fy: string, ws: Date) { const m = monthOf(fy, ws); const s = weekStart(monthStart(fy, m)); return Math.floor((ws.getTime() - s.getTime()) / (7 * 864e5)) + 1; }
+export function weekNo(fy: string, ws: Date) { const m = monthOf(fy, new Date(ws.getTime() + 3 * 864e5)); const s = weekStart(monthStart(fy, m)); return Math.floor((ws.getTime() - s.getTime()) / (7 * 864e5)) + 1; }
+export function weekLabel(ws: Date) { const m = monthOf(FY, new Date(ws.getTime() + 3 * 864e5)); return `${MONTHS[m - 1]} W${weekNo(FY, ws)}`; }
+/** Weekly cut-off: Saturday 2:00 PM (East Africa time) after the week ends. */
+export function cutoffOf(ws: Date) { return new Date(ws.getTime() + 7 * 864e5 + 11 * 3600e3); }
+export const today = () => new Date();
+export const curMonth = () => { const n = today(); if (n < monthStart(FY, 1)) return 1; if (n >= monthStart(FY, 13)) return 12; return monthOf(FY, n); };
+
+// ---------------- periods ----------------
+export type PT = 'M' | 'Q' | 'H' | 'Y';
+export type Period = { t: PT; n: number };
+export function periodMonths(p: Period): number[] { if (p.t === 'M') return [p.n]; if (p.t === 'Q') return qMonths(p.n); if (p.t === 'H') return p.n === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12]; return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; }
+export function periodLabel(p: Period) { return p.t === 'M' ? MONTHS[p.n - 1] : p.t === 'Q' ? `Q${p.n}` : p.t === 'H' ? (p.n === 1 ? 'First half' : 'Second half') : 'Year'; }
+export function currentPeriod(t: PT): Period { const m = curMonth(); return { t, n: t === 'M' ? m : t === 'Q' ? qOfMonth(m) : t === 'H' ? (m <= 6 ? 1 : 2) : 1 }; }
+export function periodOptions(t: PT): Period[] { const k = t === 'M' ? 12 : t === 'Q' ? 4 : t === 'H' ? 2 : 1; return Array.from({ length: k }, (_, i) => ({ t, n: i + 1 })); }
+export const pkey = (p: Period) => p.t + p.n;
+/** Share of the period that has passed (0 before it starts, 1 after it ends). */
+export function elapsed(p: Period) { const ms = periodMonths(p); const s = monthStart(FY, ms[0]).getTime(), e = monthStart(FY, ms[ms.length - 1] + 1).getTime(); return Math.max(0, Math.min(1, (today().getTime() - s) / (e - s))); }
 
 // ---------------- formatting ----------------
 export function fmt(v: number | null | undefined, d = 0) { if (v == null || isNaN(v)) return '—'; return v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d }); }
 export function money(v: number | null | undefined) { if (v == null || isNaN(v)) return '—'; const a = Math.abs(v); if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B'; if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M'; if (a >= 1e3) return (v / 1e3).toFixed(0) + 'K'; return v.toFixed(0); }
 export function pct(v: number | null | undefined, d = 0) { return v == null || isNaN(v) ? '—' : (v * 100).toFixed(d) + '%'; }
 export const sum = (a: (number | null | undefined)[]) => a.reduce<number>((s, x) => s + (x || 0), 0);
-
-// ---------------- statuses and bands ----------------
-export function statusOf(p: number | null, conf: string | null | undefined, db: DB): [string, 'good' | 'warn' | 'bad' | 'none'] {
-  const t = db.settings.status_thresholds || { on_track: 95, off_track: 70 };
-  if (p == null) return ['No data', 'none'];
-  if (p * 100 < t.off_track) return ['Off track', 'bad'];
-  if (p * 100 < t.on_track || conf === 'Low') return ['Behind', 'warn'];
-  return ['On track', 'good'];
+export const avg = (a: (number | null | undefined)[]) => { const v = a.filter(x => x != null) as number[]; return v.length ? sum(v) / v.length : null; };
+function agg(vals: (number | null)[], how: string): number | null {
+  const v = vals.filter(x => x != null) as number[]; if (!v.length) return null;
+  if (how === 'sum') return sum(v); if (how === 'average') return sum(v) / v.length; if (how === 'max') return Math.max(...v); if (how === 'min') return Math.min(...v); return v[v.length - 1];
 }
-export function bandOf(p: number | null, db: DB) {
-  if (p == null) return '—';
-  const bands = (db.settings.bands || []) as { name: string; min: number }[];
-  for (const b of bands) if (p * 100 >= b.min) return b.name;
-  return bands.length ? bands[bands.length - 1].name : '—';
-}
+export const AGG_NAME: Record<string, string> = { sum: 'Adds up (total of the period)', average: 'Average of the months', latest: 'Latest value (level reached)', max: 'Highest value', min: 'Lowest value' };
+export const DIR_NAME: Record<string, string> = { increase: 'Progressive — higher is better', decrease: 'Regressive — lower is better', maintain: 'Maintain — stay on target' };
 
 // ---------------- plan maths ----------------
 export function lineVals(l: any, base = false): number[] { const v = (base ? l.val0 : l.val) || l.val0 || []; return Array.from({ length: 12 }, (_, i) => Number(v[i] || 0)); }
@@ -61,102 +68,146 @@ export function actualBy(db: DB, unit: string, sec: string, months: number[], gr
 }
 export function lastActualMonth(db: DB, unit?: string) { let m = 0; db.actuals.forEach(a => { if ((!unit || a.unit_id === unit) && a.value != null && a.month > m) m = a.month; }); return m; }
 
-// ---------------- key results and objectives ----------------
-export function currentQ(db: DB) { return Number(db.settings.current?.quarter || 1); }
-function krTargetFor(db: DB, k: any, q: number) { const t = db.kr_targets.find(x => x.kr_id === k.id && x.quarter === q); return t ? Number(t.target) : null; }
+// ---------------- key results ----------------
+export function currentQ(_db?: DB) { return qOfMonth(curMonth()); }
 export function lastCheckIn(db: DB, krId: string) { let best: any = null; for (const c of db.check_ins) if (c.kr_id === krId && (!best || c.created_at > best.created_at)) best = c; return best; }
-
-/** Progress 0..n of a key result (null when nothing to measure yet). */
-export function krProgress(db: DB, k: any, depth = 0): number | null {
-  if (depth > 8) return null;
-  if (k.measure === 'children') {
-    const kids = db.objectives.filter(o => o.parent_kr_id === k.id);
-    if (!kids.length) return null;
-    return weighted(kids.map(o => [Number(o.weight_to_parent) || 1, objScore(db, o, depth + 1)]));
-  }
-  if (k.measure === 'deliverables') {
-    const ds = db.deliverables.filter(d => d.key_result_id === k.id && d.status !== 'removed' && d.status !== 'transferred');
-    if (!ds.length) return null;
-    return weighted(ds.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? 1 : d.status === 'done' ? 0.5 : 0]));
-  }
-  if (k.measure === 'plan') {
-    const link = db.kr_plan_links.find(x => x.kr_id === k.id);
-    const unit = unitOfObjective(db, k.objective_id);
-    if (!link || !unit) return null;
-    const last = lastActualMonth(db, unit);
-    if (!last) return null;
-    const ms = Array.from({ length: last }, (_, i) => i + 1);
-    const plan = planBy(db, unit, link.section, ms, link.line_groups, false, link.metric);
-    const act = actualBy(db, unit, link.section, ms, link.line_groups);
-    if (act == null || !plan) return null;
-    return k.lower_is_better ? (act <= 0 ? 1 : plan / act) : act / plan;
-  }
-  const c = lastCheckIn(db, k.id);
-  if (!c || c.value == null) return null;
-  const v = Number(c.value), base = Number(k.baseline || 0);
-  const tgt = krTargetFor(db, k, c.quarter || currentQ(db)) ?? (k.year_target != null ? Number(k.year_target) : null);
-  if (tgt == null) return null;
-  if (k.lower_is_better) return v <= tgt ? 1 : Math.max(0, (base - v) / Math.max(1e-9, base - tgt));
-  if (tgt === base) return v >= tgt ? 1 : 0;
-  return Math.max(0, (v - base) / (tgt - base));
-}
-export function weighted(items: [number, number | null][]) {
-  const ok = items.filter(x => x[1] != null) as [number, number][];
-  if (!ok.length) return null;
-  const w = sum(ok.map(x => x[0]));
-  return w ? sum(ok.map(x => x[0] * Math.min(1, x[1]))) / w : null;
-}
 export function unitOfObjective(db: DB, oid: string) { return db.objectives.find(o => o.id === oid)?.unit_id; }
 export function krsOf(db: DB, oid: string) { return db.key_results.filter(k => k.objective_id === oid && !k.retired_at).sort((a, b) => (a.sort || 0) - (b.sort || 0)); }
 export function childObjectives(db: DB, oid: string) { return db.objectives.filter(o => o.parent_objective_id === oid); }
+const aggOf = (k: Row) => k.aggregation || (k.kr_type === 'cumulative' ? 'sum' : 'latest');
+const dirOf = (k: Row) => k.direction || (k.lower_is_better ? 'decrease' : 'increase');
 
-/** Objective score O = Σ w·min(p,1) / Σ w. An objective with no key results takes the weighted score of the objectives below it. */
-export function objScore(db: DB, o: any, depth = 0): number | null {
-  const c = db.cache; const ck = 'o' + o.id;
-  if (c.has(ck)) return c.get(ck);
-  const v = objScore0(db, o, depth); c.set(ck, v); return v;
+/** Monthly check-in values (latest check-in per month). */
+export function monthlyValues(db: DB, k: Row): (number | null)[] {
+  const out: (number | null)[] = Array(12).fill(null); const at: string[] = Array(12).fill('');
+  for (const c of db.check_ins) { if (c.kr_id !== k.id || c.value == null) continue; const m = c.month || (c.quarter ? c.quarter * 3 : null); if (!m) continue; if (c.created_at >= at[m - 1]) { out[m - 1] = Number(c.value); at[m - 1] = c.created_at; } }
+  return out;
 }
-function objScore0(db: DB, o: any, depth: number): number | null {
-  const ks = krsOf(db, o.id);
-  if (ks.length) return weighted(ks.map(k => [Number(k.weight) || 1, krProgress(db, k, depth)]));
-  const kids = childObjectives(db, o.id);
-  if (!kids.length || depth > 8) return null;
-  return weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, depth + 1)]));
-}
-
-/** Organisation score = average of that org unit's objectives; a level with none inherits from the level above. */
-export function orgScore(db: DB, orgId: string | null | undefined, depth = 0): number | null {
-  if (!orgId || depth > 6) return null;
-  const ck = 'g' + orgId; if (db.cache.has(ck)) return db.cache.get(ck);
-  const v = orgScore0(db, orgId, depth); db.cache.set(ck, v); return v;
-}
-function orgScore0(db: DB, orgId: string, depth: number): number | null {
-  const objs = db.objectives.filter(o => o.org_unit_id === orgId);
-  const vals = objs.map(o => objScore(db, o)).filter(v => v != null) as number[];
-  if (vals.length) return sum(vals) / vals.length;
-  const org = db.org_units.find(u => u.id === orgId);
-  return org ? orgScore(db, org.parent_id, depth + 1) : null;
-}
-export function orgShare(db: DB, level: string) {
-  const w = db.settings.org_weights || { unit: 70, department: 60, division: 50, employee: 30 };
-  const key = level === 'group' ? 'unit' : level;
-  return (Number(w[key] ?? 30)) / 100;
-}
-/** Person result R = s·S_org + (1−s)·personal. */
-export function personResult(db: DB, p: any) {
-  const s = orgShare(db, p.level);
-  if (p.status === 'Vacant') return { s, org: orgScore(db, p.org_unit_id), personal: null, R: null, basis: 'Vacant position', hr: null };
-  const org = orgScore(db, p.org_unit_id);
-  const dels = db.deliverables.filter(d => d.owner_position_id === p.id && !['removed', 'transferred'].includes(d.status));
-  let personal: number | null = null, basis = 'No personal items yet';
-  if (dels.length) { personal = weighted(dels.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? Math.min(1, d.target ? Number(d.actual || d.target) / Number(d.target) : 1) : 0])); basis = `${dels.length} deliverables`; }
-  else {
-    const ks = db.key_results.filter(k => k.owner_position_id === p.id);
-    if (ks.length) { personal = weighted(ks.map(k => [Number(k.weight) || 1, krProgress(db, k)])); basis = `${ks.length} key results owned`; }
+/** Target for a period, from monthly, quarterly or annual targets (whichever the key result uses). */
+export function krTarget(db: DB, k: Row, p: Period): number | null {
+  const ms = periodMonths(p), a = aggOf(k);
+  if (k.measure === 'plan') { const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id); return l && u ? planBy(db, u, l.section, ms, l.line_groups, false, l.metric) : null; }
+  const mt = db.kr_month_targets.filter(t => t.kr_id === k.id);
+  if (k.target_mode === 'monthly' && mt.length) { const v = ms.map(m => { const t = mt.find(x => x.month === m); return t ? Number(t.target) : null; }); return agg(v, a); }
+  const qt = db.kr_targets.filter(t => t.kr_id === k.id);
+  if (qt.length && k.target_mode !== 'annual') {
+    const tq = (q: number) => { const t = qt.find(x => x.quarter === q); return t ? Number(t.target) : null; };
+    if (p.t === 'M') { const v = tq(qOfMonth(p.n)); return v == null ? null : a === 'sum' ? v / 3 : v; }
+    return agg(Array.from(new Set(ms.map(qOfMonth))).map(tq), a);
   }
+  if (k.year_target == null) return null;
+  const yt = Number(k.year_target), b = Number(k.baseline ?? 0);
+  if (a === 'sum') return yt * ms.length / 12;
+  if (a === 'latest' && dirOf(k) !== 'maintain' && k.baseline != null) return b + (yt - b) * (ms[ms.length - 1] / 12);
+  return yt;
+}
+/** Actual for a period (null when nothing has been recorded yet). */
+export function krActual(db: DB, k: Row, p: Period): number | null {
+  const ms = periodMonths(p), a = aggOf(k);
+  if (k.measure === 'plan') { const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id); return l && u ? actualBy(db, u, l.section, ms, l.line_groups) : null; }
+  const mv = monthlyValues(db, k);
+  if (a === 'latest') { for (let m = ms[ms.length - 1]; m >= 1; m--) if (mv[m - 1] != null) return mv[m - 1]; return null; }
+  return agg(ms.map(m => mv[m - 1]), a);
+}
+function ratioFor(k: Row, act: number | null, tgt: number | null): number | null {
+  if (act == null || tgt == null) return null;
+  const d = dirOf(k), a = aggOf(k), b = k.baseline != null ? Number(k.baseline) : null;
+  if (d === 'maintain') { const tol = k.tolerance != null ? Number(k.tolerance) : Math.abs(tgt) * 0.05; const dev = Math.abs(act - tgt); return dev <= tol ? 1 : Math.max(0, 1 - (dev - tol) / Math.max(Math.abs(tgt), 1e-9)); }
+  if (d === 'decrease') {
+    if (a !== 'sum' && b != null && b !== tgt) return Math.max(0, (b - act) / (b - tgt));
+    return act <= tgt ? 1 : Math.max(0, tgt / act);
+  }
+  if (a !== 'sum' && b != null && b !== tgt) return Math.max(0, (act - b) / (tgt - b));
+  return tgt > 0 ? Math.max(0, act / tgt) : act > 0 ? 1 : 0;
+}
+export type KrState = { target: number | null; actual: number | null; progress: number | null; ratio: number | null; expected: number; label: string; tone: 'good' | 'warn' | 'bad' | 'none'; toDate: boolean };
+/** Progress, pace and status of a key result for a period. */
+export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 0): KrState {
+  const ck = `k${k.id}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
+  const e = elapsed(p); const ms = periodMonths(p); let target: number | null = null, actual: number | null = null, progress: number | null = null, toDate = false;
+  if (e <= 0) { const r0: KrState = { target: k.measure === 'manual' ? krTarget(db, k, p) : null, actual: null, progress: null, ratio: null, expected: 0, label: 'Not started', tone: 'none', toDate: false }; db.cache.set(ck, r0); return r0; }
+  if (k.measure === 'children') {
+    const kids = db.objectives.filter(o => o.parent_kr_id === k.id);
+    progress = kids.length && depth < 8 ? weighted(kids.map(o => [Number(o.weight_to_parent) || 1, objScore(db, o, p, depth + 1)])) : null; toDate = true;
+  } else if (k.measure === 'deliverables') {
+    const cm = curMonth();
+    const ds = db.deliverables.filter(d => d.key_result_id === k.id && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
+    const due = ds.filter(d => d.month <= cm);
+    target = sum(ds.map(d => Number(d.weight) || 1)); actual = sum(ds.filter(d => d.status === 'accepted').map(d => Number(d.weight) || 1));
+    progress = due.length ? weighted(due.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? 1 : 0])) : null; toDate = true;
+  } else if (k.measure === 'plan') {
+    const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id);
+    if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups) : null; const t2 = done.length ? planBy(db, u, l.section, done, l.line_groups, false, l.metric) : null; progress = ratioFor(k, actual, t2); toDate = true; }
+  } else { target = krTarget(db, k, p); actual = krActual(db, k, p); progress = ratioFor(k, actual, target); }
+  const st = statusFor(db, progress, k.confidence, e, toDate);
+  const r: KrState = { target, actual, progress, expected: e, toDate, ...st };
+  db.cache.set(ck, r); return r;
+}
+/** Pace rule: expected progress = share of the period passed (measures that are already "to date" are compared directly). */
+export function statusFor(db: DB, progress: number | null, conf: string | null | undefined, e: number, toDate = false): { label: string; tone: 'good' | 'warn' | 'bad' | 'none'; ratio: number | null } {
+  const sm = db.settings.status_method || { method: 'pace', grace_pct: 15 }; const t = db.settings.status_thresholds || { on_track: 95, off_track: 70 };
+  if (e <= 0) return { label: 'Not started', tone: 'none', ratio: null };
+  if (progress == null) return e * 100 < Number(sm.grace_pct ?? 15) ? { label: 'Too early', tone: 'none', ratio: null } : { label: 'No update', tone: 'warn', ratio: null };
+  const ratio = sm.method === 'absolute' || toDate || e >= 1 ? progress : progress / Math.max(e, 0.1);
+  if (ratio * 100 < t.off_track) return { label: 'Off track', tone: 'bad', ratio };
+  if (ratio * 100 < t.on_track || (conf === 'Low' && sm.low_confidence !== 'ignore')) return { label: 'Behind', tone: 'warn', ratio };
+  return { label: 'On track', tone: 'good', ratio };
+}
+/** Backwards-compatible helpers */
+export function krProgress(db: DB, k: Row, p?: Period) { return krState(db, k, p).progress; }
+export function statusOf(p: number | null, conf: string | null | undefined, db: DB): [string, 'good' | 'warn' | 'bad' | 'none'] { const s = statusFor(db, p, conf, 1, true); return [s.label, s.tone]; }
+export function bandOf(p: number | null, db: DB) { if (p == null) return '—'; const bands = (db.settings.bands || []) as { name: string; min: number }[]; for (const b of bands) if (p * 100 >= b.min) return b.name; return bands.length ? bands[bands.length - 1].name : '—'; }
+export function weighted(items: [number, number | null][]) { const ok = items.filter(x => x[1] != null) as [number, number][]; if (!ok.length) return null; const w = sum(ok.map(x => x[0])); return w ? sum(ok.map(x => x[0] * Math.min(1, x[1]))) / w : null; }
+
+// ---------------- objectives, organisation, people ----------------
+/** Objective score = Σ w·min(progress,1) / Σ w for the period; an objective with no key results takes its children's weighted score. */
+export function objScore(db: DB, o: Row, p: Period = currentPeriod('Q'), depth = 0): number | null {
+  const ck = `o${o.id}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
+  let v: number | null; const ks = krsOf(db, o.id);
+  if (ks.length) v = weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress]));
+  else { const kids = childObjectives(db, o.id); v = kids.length && depth < 8 ? weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)])) : null; }
+  db.cache.set(ck, v); return v;
+}
+export function objState(db: DB, o: Row, p: Period = currentPeriod('Q')) { const ks = krsOf(db, o.id); const toDate = ks.length > 0 && ks.every(k => k.measure !== 'manual'); return statusFor(db, objScore(db, o, p), null, elapsed(p), toDate); }
+/** Organisation score = average of its own objectives; a level with none takes the level above. */
+export function orgScore(db: DB, orgId: string | null | undefined, p: Period = currentPeriod('Q'), depth = 0): number | null {
+  if (!orgId || depth > 6) return null;
+  const ck = `g${orgId}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
+  const vals = db.objectives.filter(o => o.org_unit_id === orgId).map(o => objScore(db, o, p)).filter(v => v != null) as number[];
+  let v: number | null = vals.length ? sum(vals) / vals.length : null;
+  if (v == null) { const org = db.org_units.find(u => u.id === orgId); v = org ? orgScore(db, org.parent_id, p, depth + 1) : null; }
+  db.cache.set(ck, v); return v;
+}
+/** Score from the org unit's own objectives only (null when it has none with data). */
+export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return avg(db.objectives.filter(o => o.org_unit_id === orgId).map(o => objScore(db, o, p))); }
+/** Whole-subtree score (unit with all its departments and divisions) — used for rankings. */
+export function subtreeIds(db: DB, id: string) { const ids = new Set<string>([id]); let grew = true; while (grew) { grew = false; db.org_units.forEach(u => { if (u.parent_id && ids.has(u.parent_id) && !ids.has(u.id)) { ids.add(u.id); grew = true; } }); } return ids; }
+export function orgShare(db: DB, level: string) { const w = db.settings.org_weights || { unit: 70, department: 60, division: 50, employee: 30 }; return Number(w[level === 'group' ? 'unit' : level] ?? 30) / 100; }
+export function delivScore(db: DB, posIds: Set<string>, p: Period) {
+  const ms = periodMonths(p), cm = curMonth();
+  const ds = db.deliverables.filter(d => posIds.has(d.owner_position_id) && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
+  const due = ds.filter(d => d.month <= cm);
+  return { total: ds.length, due: due.length, accepted: ds.filter(d => d.status === 'accepted').length, done: ds.filter(d => d.status === 'done').length, score: due.length ? weighted(due.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0])) : null };
+}
+/** Person result R = s·S_org + (1−s)·personal, for the period. */
+export function personResult(db: DB, pos: Row, p: Period = currentPeriod('Q')) {
+  const s = orgShare(db, pos.level); const org = orgScore(db, pos.org_unit_id, p);
+  if (pos.status === 'Vacant') return { s, org, personal: null as number | null, R: null as number | null, basis: 'Vacant position', hr: null as number | null };
+  const d = delivScore(db, new Set([pos.id]), p);
+  let personal = d.score, basis = d.total ? `${d.accepted}/${d.due} due deliverables accepted` : '';
+  if (personal == null) { const ks = db.key_results.filter(k => k.owner_position_id === pos.id); if (ks.length) { personal = weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p).progress])); basis = `${ks.length} key results owned`; } }
+  if (!basis) basis = 'No personal items yet';
   const R = org == null && personal == null ? null : s * (org ?? 0) + (1 - s) * (personal ?? org ?? 0);
-  const hrMax = Number(db.settings.hr_scale?.max ?? 70);
-  return { s, org, personal, R, basis, hr: R == null ? null : R * hrMax };
+  return { s, org, personal, R, basis, hr: R == null ? null : R * Number(db.settings.hr_scale?.max ?? 70) };
+}
+
+// ---------------- work ----------------
+export function workStats(db: DB, posIds: Set<string>, wk: string) {
+  const a = db.activities.filter(x => posIds.has(x.owner_position_id) && x.week_start === wk);
+  const cut = cutoffOf(new Date(wk + 'T00:00:00Z')).toISOString();
+  const updated = new Set(a.filter(x => (x.updated_at || x.created_at) <= cut).map(x => x.owner_position_id));
+  return { total: a.length, done: a.filter(x => x.status === 'Done').length, stuck: a.filter(x => x.status === 'Stuck').length, people: new Set(a.map(x => x.owner_position_id)).size, onTime: updated.size,
+    completion: a.length ? sum(a.map(x => x.status === 'Done' ? 100 : Number(x.pct) || 0)) / (a.length * 100) : null };
 }
 
 // ---------------- statements ----------------
@@ -167,8 +218,7 @@ export function incomeStatement(db: DB, units: string[], months: number[]): Stmt
   const A = (sec: string, g?: string[]) => { const v = units.map(u => actualBy(db, u, sec, months, g)); return v.every(x => x == null) ? null : sum(v); };
   const groups = (sec: string) => Array.from(new Set(units.flatMap(u => linesOf(db, u, sec).map(l => l.line_group || 'Other'))));
   const rows: Stmt[] = [];
-  const revG = groups('rev');
-  revG.forEach(g => rows.push({ label: g, plan: P('rev', [g]), act: A('rev', [g]), base: B('rev', [g]), indent: true }));
+  groups('rev').forEach(g => rows.push({ label: g, plan: P('rev', [g]), act: A('rev', [g]), base: B('rev', [g]), indent: true }));
   const rev = { label: 'Revenue', plan: P('rev'), act: A('rev'), base: B('rev'), bold: true }; rows.push(rev);
   const cos = { label: 'Cost of sales', plan: P('cos'), act: A('cos'), base: B('cos') }; rows.push(cos);
   const gp = { label: 'Gross profit', plan: rev.plan - cos.plan, act: rev.act == null && cos.act == null ? null : (rev.act || 0) - (cos.act || 0), base: rev.base - cos.base, bold: true }; rows.push(gp);
@@ -185,8 +235,7 @@ export function cashFlow(db: DB, units: string[]) {
   const flows = (dir: string, k: 'plan' | 'actual') => months.map(m => { const v = items.filter(i => i.direction === dir).map(i => val(i.id, m, k)); return v.every(x => x == null) ? null : sum(v); });
   const res: any = { items: items.filter(i => i.direction !== 'opening'), val, opening };
   (['plan', 'actual'] as const).forEach(k => {
-    const inn = flows('in', k), out = flows('out', k);
-    let bal = opening[k]; const close: (number | null)[] = [];
+    const inn = flows('in', k), out = flows('out', k); let bal = opening[k]; const close: (number | null)[] = [];
     months.forEach(m => { if (k === 'actual' && inn[m - 1] == null && out[m - 1] == null) { close.push(null); return; } bal += (inn[m - 1] || 0) - (out[m - 1] || 0); close.push(bal); });
     res[k] = { inn, out, close };
   });
@@ -195,15 +244,12 @@ export function cashFlow(db: DB, units: string[]) {
 
 // ---------------- resources waterline ----------------
 export function needsFor(db: DB, unit: string, q: number) {
-  const ms = qMonths(q);
-  const keys = new Map<string, { key: string; sec: string; grp: string; amount: number; must: boolean }>();
+  const ms = qMonths(q); const keys = new Map<string, { key: string; sec: string; grp: string; amount: number; must: boolean }>();
   for (const l of linesOf(db, unit)) {
     if (!['cos', 'opex', 'capex', 'proj'].includes(l.section)) continue;
-    const key = `${l.section}|${l.line_group || 'Other'}`;
-    const a = sum(ms.map(m => lineVals(l)[m - 1]));
+    const key = `${l.section}|${l.line_group || 'Other'}`; const a = sum(ms.map(m => lineVals(l)[m - 1]));
     const cur = keys.get(key) || { key, sec: l.section, grp: l.line_group || 'Other', amount: 0, must: false };
-    cur.amount += a; cur.must = cur.must || !!l.must_pay || l.section === 'opex';
-    keys.set(key, cur);
+    cur.amount += a; cur.must = cur.must || !!l.must_pay || l.section === 'opex'; keys.set(key, cur);
   }
   const rank = (k: string) => db.need_priority.find(n => n.unit_id === unit && n.need_key === k)?.rank ?? 999;
   const list = Array.from(keys.values()).filter(n => n.amount > 0).sort((a, b) => (Number(b.must) - Number(a.must)) || rank(a.key) - rank(b.key));

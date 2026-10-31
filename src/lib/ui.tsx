@@ -57,3 +57,64 @@ export function Page({ title, desc, help, children }: { title: string; desc?: st
     {open && <Drawer title="How this works" onClose={() => setOpen(false)}><div className="helpb">{help}</div></Drawer>}
   </>;
 }
+
+/* ---------------- periods ---------------- */
+import { currentPeriod, periodOptions, periodLabel, type Period, type PT } from './calc';
+export function usePeriod(def: PT = 'Q'): [Period, (p: Period) => void] {
+  const [p, setP] = useState<Period>(() => { try { const s = JSON.parse(localStorage.getItem('wbg.period') || 'null'); if (s && s.t && s.n) return s; } catch { /* ignore */ } return currentPeriod(def); });
+  const set = (x: Period) => { setP(x); try { localStorage.setItem('wbg.period', JSON.stringify(x)); } catch { /* ignore */ } };
+  return [p, set];
+}
+export function PeriodPicker({ value, onChange, types = ['M', 'Q', 'H', 'Y'] }: { value: Period; onChange: (p: Period) => void; types?: PT[] }) {
+  const names: Record<PT, string> = { M: 'Month', Q: 'Quarter', H: 'Half', Y: 'Year' };
+  return <div className="row" style={{ gap: 6 }}>
+    <Seg value={value.t} options={types.map(t => [t, names[t]] as [PT, string])} onChange={t => onChange(currentPeriod(t))} />
+    {value.t !== 'Y' && <select aria-label="Period" value={value.n} onChange={e => onChange({ t: value.t, n: Number(e.target.value) })}>{periodOptions(value.t).map(o => <option key={o.n} value={o.n}>{periodLabel(o)}{o.n === currentPeriod(value.t).n ? ' (now)' : ''}</option>)}</select>}
+  </div>;
+}
+
+/* ---------------- charts (plain SVG; hover shows values) ---------------- */
+export type Series = { name: string; values: (number | null)[]; color: string; dashed?: boolean };
+export function LineChart({ labels, series, height = 180, fmtY = (v: number) => String(Math.round(v)), pctAxis }: { labels: string[]; series: Series[]; height?: number; fmtY?: (v: number) => string; pctAxis?: boolean }) {
+  const [hi, setHi] = useState<number | null>(null);
+  const W = 640, H = height, L = 52, R = 12, T = 12, B = 24;
+  const all = series.flatMap(s => s.values.filter(v => v != null) as number[]);
+  const max = pctAxis ? Math.max(1, ...all) : Math.max(1, ...all) * 1.08, min = 0;
+  const x = (i: number) => L + (labels.length <= 1 ? 0 : i * (W - L - R) / (labels.length - 1));
+  const y = (v: number) => T + (H - T - B) * (1 - (v - min) / (max - min || 1));
+  const ticks = [0, .25, .5, .75, 1].map(f => min + f * (max - min));
+  return <div className="chart"><svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={series.map(s => s.name).join(', ')} onMouseLeave={() => setHi(null)}>
+    {ticks.map((t, i) => <g key={i}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="var(--line)" /><text x={L - 6} y={y(t) + 4} textAnchor="end" fontSize="10" fill="var(--muted)">{fmtY(t)}</text></g>)}
+    {labels.map((l, i) => <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--muted)">{l}</text>)}
+    {series.map(s => { const pts = s.values.map((v, i) => v == null ? null : [x(i), y(v)]).filter(Boolean) as number[][]; return <g key={s.name}>
+      <polyline fill="none" stroke={s.color} strokeWidth="2" strokeDasharray={s.dashed ? '5 4' : undefined} points={pts.map(p => p.join(',')).join(' ')} />
+      {s.values.map((v, i) => v == null ? null : <circle key={i} cx={x(i)} cy={y(v)} r={hi === i ? 4.5 : 3} fill={s.color} stroke="var(--panel)" strokeWidth="2" />)}</g>; })}
+    {labels.map((_, i) => <rect key={i} x={x(i) - (W - L - R) / Math.max(1, labels.length - 1) / 2} y={T} width={(W - L - R) / Math.max(1, labels.length - 1)} height={H - T - B} fill="transparent" onMouseEnter={() => setHi(i)} />)}
+    {hi != null && <line x1={x(hi)} x2={x(hi)} y1={T} y2={H - B} stroke="var(--line2)" />}
+  </svg>
+    <div className="legend">{series.map(s => <span key={s.name}><i style={{ background: s.color }} />{s.name}{hi != null && s.values[hi] != null ? ': ' + fmtY(s.values[hi] as number) : ''}</span>)}{hi != null && <b>{labels[hi]}</b>}</div></div>;
+}
+export function BarChart({ labels, series, height = 190, fmtY = (v: number) => String(Math.round(v)) }: { labels: string[]; series: Series[]; height?: number; fmtY?: (v: number) => string }) {
+  const [hi, setHi] = useState<number | null>(null);
+  const W = 640, H = height, L = 52, R = 8, T = 10, B = 24;
+  const all = series.flatMap(s => s.values.filter(v => v != null) as number[]); const max = Math.max(1, ...all) * 1.08;
+  const gw = (W - L - R) / Math.max(1, labels.length), bw = Math.max(3, Math.min(22, (gw - 6) / series.length - 2));
+  const y = (v: number) => T + (H - T - B) * (1 - v / max);
+  return <div className="chart"><svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={series.map(s => s.name).join(', ')} onMouseLeave={() => setHi(null)}>
+    {[0, .25, .5, .75, 1].map((f, i) => <g key={i}><line x1={L} x2={W - R} y1={y(f * max)} y2={y(f * max)} stroke="var(--line)" /><text x={L - 6} y={y(f * max) + 4} textAnchor="end" fontSize="10" fill="var(--muted)">{fmtY(f * max)}</text></g>)}
+    {labels.map((l, i) => { const x0 = L + i * gw + (gw - series.length * (bw + 2)) / 2; return <g key={i} onMouseEnter={() => setHi(i)}>
+      <rect x={L + i * gw} y={T} width={gw} height={H - T - B} fill={hi === i ? 'var(--sunk)' : 'transparent'} />
+      {series.map((s, j) => { const v = s.values[i]; if (v == null) return null; const h = Math.max(0, (H - B) - y(Math.max(0, v))); return <rect key={j} x={x0 + j * (bw + 2)} y={(H - B) - h} width={bw} height={h} rx={Math.min(4, bw / 2)} fill={s.color} opacity={s.dashed ? .45 : 1} />; })}
+      <text x={L + i * gw + gw / 2} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--muted)">{l.length > 12 ? l.slice(0, 11) + '…' : l}</text></g>; })}
+  </svg>
+    <div className="legend">{series.map(s => <span key={s.name}><i style={{ background: s.color, opacity: s.dashed ? .45 : 1 }} />{s.name}{hi != null && s.values[hi] != null ? ': ' + fmtY(s.values[hi] as number) : ''}</span>)}{hi != null && <b>{labels[hi]}</b>}</div></div>;
+}
+/** Horizontal stacked bar of status counts. */
+export function StatusStack({ counts, compact }: { counts: { label: string; n: number; tone: string }[]; compact?: boolean }) {
+  const tot = counts.reduce((s, c) => s + c.n, 0) || 1;
+  const bar = <div className="stack-bar">{counts.filter(c => c.n).map(c => <i key={c.label} className={c.tone} style={{ width: (c.n / tot * 100) + '%' }} title={`${c.label}: ${c.n}`} />)}</div>;
+  if (compact) return <div title={counts.map(c => `${c.label}: ${c.n}`).join(' · ')}>{bar}<div className="mini" style={{ marginTop: 3 }}>{counts.slice(0, 3).map(c => `${c.n} ${c.label.toLowerCase()}`).join(' · ')}</div></div>;
+  return <div>{bar}
+    <div className="legend">{counts.map(c => <span key={c.label}><i className={c.tone} />{c.label} {c.n}</span>)}</div></div>;
+}
+export function StatePill({ s }: { s: { label: string; tone: string } }) { return <Pill tone={s.tone}>{s.label}</Pill>; }

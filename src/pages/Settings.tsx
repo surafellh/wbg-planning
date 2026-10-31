@@ -6,16 +6,22 @@ import { ClaimsPanel } from './Claim';
 
 export function SettingsRules() {
   const { db } = useData(); const save = useSave(); if (!db) return null;
-  const s = db.settings; const w = s.org_weights || {}; const t = s.status_thresholds || {}; const hr = s.hr_scale || {}; const cur = s.current || {};
+  const s = db.settings; const sm = s.status_method || {}; const w = s.org_weights || {}; const t = s.status_thresholds || {}; const hr = s.hr_scale || {}; const cur = s.current || {};
   const put = (key: string, value: any) => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], 'Saved');
   return <Page title="Rules" desc="The numbers behind scores, statuses and results." help={<p>These settings apply to every unit. The organisation share decides how much of a person's result comes from their organisation's score; the rest is their personal part. Changes apply immediately to every score shown in the app.</p>}>
     <div className="card stack"><h2>Organisation share of a person's result</h2>
       <div className="g4">{([['unit', 'Unit head'], ['department', 'Department head'], ['division', 'Division head'], ['employee', 'Team member']] as const).map(([k, l]) =>
         <label key={k} className="f">{l} (%)<NumIn value={w[k]} onChange={v => v != null && v >= 0 && v <= 100 && put('org_weights', { ...w, [k]: v })} /></label>)}</div>
       <p className="note">Result = share × organisation score + (100% − share) × personal part.</p></div>
-    <div className="card stack"><h2>Status</h2><div className="g4">
-      <label className="f">On track from (%)<NumIn value={t.on_track} onChange={v => v != null && put('status_thresholds', { ...t, on_track: v })} /></label>
-      <label className="f">Off track below (%)<NumIn value={t.off_track} onChange={v => v != null && put('status_thresholds', { ...t, off_track: v })} /></label></div></div>
+    <div className="card stack"><h2>Status: on track, behind, off track</h2>
+      <div className="g4">
+        <label className="f">How progress is judged<select value={sm.method || 'pace'} onChange={e => put('status_method', { ...sm, method: e.target.value })}><option value="pace">On pace — against the share of the period passed</option><option value="absolute">Absolute — against the full period target</option></select></label>
+        <label className="f">On track from (% of expected)<NumIn value={t.on_track} onChange={v => v != null && put('status_thresholds', { ...t, on_track: v })} /></label>
+        <label className="f">Off track below (% of expected)<NumIn value={t.off_track} onChange={v => v != null && put('status_thresholds', { ...t, off_track: v })} /></label>
+        <label className="f">"Too early" for the first (% of the period)<NumIn value={sm.grace_pct ?? 15} onChange={v => v != null && put('status_method', { ...sm, grace_pct: v })} /></label>
+      </div>
+      <label className="f" style={{ maxWidth: 420 }}>When the owner's confidence is Low<select value={sm.low_confidence || 'behind'} onChange={e => put('status_method', { ...sm, low_confidence: e.target.value })}><option value="behind">Show at most "Behind"</option><option value="ignore">Ignore confidence</option></select></label>
+      <div className="banner"><div><b>Example with the current rules:</b> six weeks into a 13-week quarter (46% passed), a key result whose quarter target is 100 needs about {Math.round(46 * (t.on_track || 95) / 100)} to be on track and is off track below {Math.round(46 * (t.off_track || 70) / 100)}. Key results taken from the plan, deliverables or objectives below are already "to date" and are compared directly. Once the period ends, the full target applies.</div></div></div>
     <div className="card stack"><h2>HR and calendar</h2><div className="g4">
       <label className="f">Results sent to HR out of (%)<NumIn value={hr.max} onChange={v => v != null && put('hr_scale', { ...hr, max: v })} /></label>
       <label className="f">Current quarter<select value={cur.quarter} onChange={e => put('current', { ...cur, quarter: Number(e.target.value) })}>{[1, 2, 3, 4].map(q => <option key={q} value={q}>Q{q}</option>)}</select></label></div>

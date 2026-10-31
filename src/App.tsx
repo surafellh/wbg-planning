@@ -5,7 +5,7 @@ import { DataProvider, ROLE_NAME, useData } from './lib/data';
 import Login from './pages/Login';
 import { ClaimScreen } from './pages/Claim';
 import Home from './pages/Home';
-import { GoalsMap, GoalsQuarter, GroupView } from './pages/Goals';
+import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
 import { RevenuePlan, BudgetPlan } from './pages/AnnualPlan';
 import { Resources, Rescope, PlanCalendar } from './pages/Resources';
@@ -16,7 +16,7 @@ import { SettingsRules, SettingsPeople, SettingsImport } from './pages/Settings'
 
 const IC: Record<string, string> = {
   home: 'M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z', work: 'M5 12l4 4L19 6M4 20h16',
-  goals: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zm0 4a5 5 0 1 0 0 10a5 5 0 1 0 0-10zm0 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4z',
+  strategy: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zm0 4a5 5 0 1 0 0 10a5 5 0 1 0 0-10zm0 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4z',
   plan: 'M4 4h16v4H4zM4 10h10v4H4zM4 16h13v4H4z', performance: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   reports: 'M5 3h10l4 4v14H5zM8 12h8M8 16h8M8 8h4', settings: 'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zM3 12h2M19 12h2M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4',
 };
@@ -26,7 +26,7 @@ type NavItem = { key: string; label: string; subs: [string, string][] };
 function useNav(): NavItem[] {
   const { can, role } = useData();
   const n: NavItem[] = [{ key: 'home', label: 'Home', subs: [] }, { key: 'work', label: 'Work', subs: [] },
-    { key: 'goals', label: 'Goals', subs: [['map', 'Strategy map'], ['quarter', 'By quarter'], ...(can('seeGroup') ? [['group', 'Group view'] as [string, string]] : [])] }];
+    { key: 'strategy', label: 'Strategy', subs: [['overview', 'Overview'], ['map', 'Strategy map'], ['targets', 'Targets & progress'], ...(can('seeGroup') ? [['group', 'Group view'] as [string, string]] : [])] }];
   if (can('editOKR') || can('editPlan')) {
     const ps: [string, string][] = [['calendar', 'Planning calendar']];
     if (can('editOKR')) ps.push(['okr', 'OKR plan']);
@@ -39,6 +39,22 @@ function useNav(): NavItem[] {
   return n;
 }
 
+/** System admin only: preview the app as the head or a team member of any department or division. */
+function SeeAs() {
+  const { db, viewAs, setViewAs, setUnit } = useData(); if (!db) return null;
+  const units = db.org_units.filter(u => u.kind === 'unit' && u.pilot).sort((a, b) => a.sort - b.sort);
+  const pick = (orgId: string, head: boolean) => { const ps = db.positions.filter(p => p.org_unit_id === orgId); return head ? ps.find(p => p.level !== 'employee') : ps.find(p => p.level === 'employee' && p.holder_name); };
+  const groupRoles = db.positions.filter(p => ['group_strategy', 'executive'].includes(p.role));
+  const opts: { label: string; options: [string, string][] }[] = [{ label: 'Group', options: groupRoles.map(p => [p.id, p.title] as [string, string]) }];
+  units.forEach(u => { const orgs = db.org_units.filter(o => o.unit_id === u.id).sort((a, b) => (a.kind === 'unit' ? -1 : b.kind === 'unit' ? 1 : a.sort - b.sort));
+    const o2: [string, string][] = []; orgs.forEach(o => { const h = pick(o.id, true), t = pick(o.id, false); const nm = o.kind === 'unit' ? 'Unit' : o.name; if (h) o2.push([h.id, `${nm} — head${h.status === 'Vacant' ? ' (vacant)' : ''}`]); if (t) o2.push([t.id, `${nm} — team member`]); });
+    opts.push({ label: u.name, options: o2 }); });
+  return <label className="f" style={{ padding: '0 10px 8px' }}>See it as
+    <select value={viewAs || ''} onChange={e => { const id = e.target.value || null; setViewAs(id); const p = id && db.positions.find(x => x.id === id); if (p && p.unit_id) setUnit(p.unit_id); }}>
+      <option value="">Myself</option>{opts.map(g => <optgroup key={g.label} label={g.label}>{g.options.map(([id, l]) => <option key={id} value={id}>{l}</option>)}</optgroup>)}
+    </select></label>;
+}
+
 function Shell() {
   const { db, loading, error, me, role, viewAs, setViewAs, toastMsg, myPositions, user } = useData();
   const nav = useNav();
@@ -48,7 +64,7 @@ function Shell() {
   if (loading) return <div className="login"><p className="note">Loading the plan…</p></div>;
   if (error) return <div className="login"><div className="card"><h2>Could not load</h2><p className="note">{error}</p><button className="btn" onClick={() => location.reload()}>Try again</button></div></div>;
   const top = loc.pathname.split('/')[1] || 'home';
-  const isAdmin = myPositions.some(p => p.role === 'super_admin' || p.role === 'group_strategy');
+  const isAdmin = myPositions.some(p => p.role === 'super_admin');
   if (!me) return <ClaimScreen />;
   const guard = (cap: boolean, el: ReactNode) => cap ? el : <Navigate to="/home" replace />;
   const has = (k: string, s?: string) => { const n = nav.find(x => x.key === k); return !!n && (!s || n.subs.some(x => x[0] === s)); };
@@ -61,11 +77,7 @@ function Shell() {
       </div>)}</nav>
       <div className="sbot">
         <div className="who"><b>{me.holder_name || me.title}</b>{me.title} · {ROLE_NAME[role]}</div>
-        {isAdmin && db && <label className="f" style={{ padding: '0 10px 8px' }}>See it as
-          <select value={viewAs || ''} onChange={e => setViewAs(e.target.value || null)}>
-            <option value="">Myself</option>
-            {db.positions.filter(p => p.role !== 'employee' || p.holder_name).sort((a, b) => (a.unit_id || '').localeCompare(b.unit_id || '') || a.sort - b.sort).slice(0, 400).map(p => <option key={p.id} value={p.id}>{(p.holder_name ? p.holder_name + ' — ' : '') + p.title}</option>)}
-          </select></label>}
+        {isAdmin && db && <SeeAs />}
         <button className="mod" onClick={() => sb.auth.signOut()}><Ico d="M15 12H4m0 0l4-4m-4 4l4 4M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" /><span>Sign out</span></button>
       </div>
     </aside>
@@ -76,10 +88,12 @@ function Shell() {
         <Route path="/" element={<Navigate to="/home" replace />} />
         <Route path="/home" element={<Home />} />
         <Route path="/work" element={<Work />} />
-        <Route path="/goals" element={<Navigate to="/goals/map" replace />} />
-        <Route path="/goals/map" element={<GoalsMap />} />
-        <Route path="/goals/quarter" element={<GoalsQuarter />} />
-        <Route path="/goals/group" element={guard(has('goals', 'group'), <GroupView />)} />
+        <Route path="/strategy" element={<Navigate to="/strategy/overview" replace />} />
+        <Route path="/strategy/overview" element={<StrategyOverview />} />
+        <Route path="/strategy/map" element={<GoalsMap />} />
+        <Route path="/strategy/targets" element={<GoalsQuarter />} />
+        <Route path="/strategy/group" element={guard(has('strategy', 'group'), <GroupView />)} />
+        <Route path="/goals/*" element={<Navigate to="/strategy/overview" replace />} />
         <Route path="/plan" element={<Navigate to="/plan/calendar" replace />} />
         <Route path="/plan/calendar" element={guard(has('plan'), <PlanCalendar />)} />
         <Route path="/plan/okr" element={guard(has('plan', 'okr'), <OkrPlan />)} />

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krsOf, childObjectives, sum, fmt, linesOf } from '../lib/calc';
-import { Page, Cmd, Modal, Pill, Empty, NumIn } from '../lib/ui';
+import { krsOf, childObjectives, sum, fmt, linesOf, MONTHS, AGG_NAME, DIR_NAME } from '../lib/calc';
+import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod } from '../lib/ui';
 import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer } from './Goals';
 
 export function orgOptions(db: DB, unit: string) {
@@ -66,43 +66,70 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
   const { db } = useData(); const save = useSave();
   const link0 = db?.kr_plan_links.find(l => l.kr_id === init.id);
   const t0 = Object.fromEntries((db?.kr_targets || []).filter(t => t.kr_id === init.id).map(t => [t.quarter, Number(t.target)]));
-  const [f, setF] = useState<Row>({ kr_type: 'cumulative', measure: 'manual', confidence: 'Medium', ...init, sec: link0?.section || 'rev', metric: link0?.metric || 'value', groups: link0?.line_groups || [], t: t0 });
+  const m0 = Object.fromEntries((db?.kr_month_targets || []).filter(t => t.kr_id === init.id).map(t => [t.month, Number(t.target)]));
+  const [f, setF] = useState<Row>({ measure: 'manual', confidence: 'Medium', aggregation: 'sum', direction: 'increase', target_mode: 'quarterly', ...init, sec: link0?.section || 'rev', metric: link0?.metric || 'value', groups: link0?.line_groups || [], t: t0, mt: m0 });
   if (!db) return null;
   const set = (k: string, v: any) => setF(x => ({ ...x, [k]: v }));
   const grps = Array.from(new Set(linesOf(db, unit, f.sec).map(l => l.line_group || 'Other')));
   const obj = byId(db.objectives, f.objective_id);
   const people = db.positions.filter(p => p.unit_id === unit);
+  const isSum = f.aggregation === 'sum';
+  // implied year figure from the entered periods
+  const implied = (() => { const vals = f.target_mode === 'monthly' ? Array.from({ length: 12 }, (_, i) => f.mt[i + 1]) : f.target_mode === 'quarterly' ? [1, 2, 3, 4].map(q => f.t[q]) : [f.year_target];
+    const v = vals.filter((x: any) => x != null) as number[]; if (!v.length) return null; return isSum ? v.reduce((a, b) => a + b, 0) : f.aggregation === 'average' ? v.reduce((a, b) => a + b, 0) / v.length : f.aggregation === 'max' ? Math.max(...v) : f.aggregation === 'min' ? Math.min(...v) : v[v.length - 1]; })();
+  function spread(how: 'even' | 'ramp' | 'back') {
+    const yt = Number(f.year_target || 0), b = Number(f.baseline || 0);
+    const w = how === 'even' ? Array(12).fill(1) : how === 'ramp' ? Array.from({ length: 12 }, (_, i) => i + 1) : Array.from({ length: 12 }, (_, i) => 12 - i);
+    const ws = w.reduce((a, c) => a + c, 0);
+    if (f.target_mode === 'monthly') { const mt: Row = {}; let run = 0; for (let i = 0; i < 12; i++) { if (isSum) mt[i + 1] = Math.round(yt * w[i] / ws * 100) / 100; else { run += w[i]; mt[i + 1] = Math.round((b + (yt - b) * run / ws) * 100) / 100; } } set('mt', mt); }
+    else { const t: Row = {}; let run = 0; for (let q = 1; q <= 4; q++) { const qw = w[q * 3 - 3] + w[q * 3 - 2] + w[q * 3 - 1]; if (isSum) t[q] = Math.round(yt * qw / ws * 100) / 100; else { run += qw; t[q] = Math.round((b + (yt - b) * run / ws) * 100) / 100; } } set('t', t); }
+  }
   async function go() {
-    const row: Row = { objective_id: f.objective_id, title: f.title.trim(), uom: f.uom || null, kr_type: f.kr_type, lower_is_better: !!f.lower_is_better, weight: f.weight ?? null, owner_position_id: f.owner_position_id || null, measure: f.measure, baseline: f.baseline ?? null, year_target: f.year_target ?? null, confidence: f.confidence };
+    const year = f.target_mode === 'annual' ? f.year_target ?? null : (f.year_target ?? implied);
+    const row: Row = { objective_id: f.objective_id, title: f.title.trim(), uom: f.uom || null, aggregation: f.aggregation, direction: f.direction, target_mode: f.target_mode, tolerance: f.tolerance ?? null,
+      kr_type: f.aggregation === 'sum' ? 'cumulative' : 'level', lower_is_better: f.direction === 'decrease', weight: f.weight ?? null, owner_position_id: f.owner_position_id || null, measure: f.measure, baseline: f.baseline ?? null, year_target: year, confidence: f.confidence };
     const r = f.id ? await sb.from('key_results').update(row).eq('id', f.id).select('id').single() : await sb.from('key_results').insert(row).select('id').single();
     if (r.error) { alert(r.error.message); return; }
     const id = r.data.id;
     if (f.measure === 'plan') await sb.from('kr_plan_links').upsert({ kr_id: id, section: f.sec, metric: f.metric, line_groups: f.groups });
     else await sb.from('kr_plan_links').delete().eq('kr_id', id);
-    const ts = [1, 2, 3, 4].filter(q => f.t[q] != null).map(q => ({ kr_id: id, quarter: q, target: f.t[q] }));
-    await sb.from('kr_targets').delete().eq('kr_id', id);
-    const ok = await save(() => ts.length ? sb.from('kr_targets').insert(ts) : Promise.resolve({ error: null }) as any, ['key_results', 'kr_plan_links', 'kr_targets'], 'Key result saved');
+    await sb.from('kr_targets').delete().eq('kr_id', id); await sb.from('kr_month_targets').delete().eq('kr_id', id);
+    const ts = f.target_mode === 'quarterly' ? [1, 2, 3, 4].filter(q => f.t[q] != null).map(q => ({ kr_id: id, quarter: q, target: f.t[q] })) : [];
+    const ms = f.target_mode === 'monthly' ? Array.from({ length: 12 }, (_, i) => i + 1).filter(m => f.mt[m] != null).map(m => ({ kr_id: id, month: m, target: f.mt[m] })) : [];
+    if (ts.length) await sb.from('kr_targets').insert(ts);
+    const ok = await save(() => ms.length ? sb.from('kr_month_targets').insert(ms) : Promise.resolve({ error: null }) as any, ['key_results', 'kr_plan_links', 'kr_targets', 'kr_month_targets'], 'Key result saved');
     if (ok) onClose();
   }
   return <Modal title={f.id ? 'Edit key result' : 'New key result'} onClose={onClose} wide>
     <p className="note">Objective: {obj?.text}</p>
     <label className="f">Key result<input type="text" value={f.title || ''} onChange={e => set('title', e.target.value)} placeholder="Measurable result, e.g. Transformers produced" /></label>
-    <div className="g4">
-      <label className="f">How it is measured<select value={f.measure} onChange={e => set('measure', e.target.value)}><option value="plan">From the annual plan</option><option value="deliverables">From deliverables</option><option value="children">From the objectives below</option><option value="manual">Checked in with evidence</option></select></label>
-      <label className="f">Unit of measure<input type="text" value={f.uom || ''} onChange={e => set('uom', e.target.value)} /></label>
-      <label className="f">Type<select value={f.kr_type} onChange={e => set('kr_type', e.target.value)}><option value="cumulative">Adds up over the year</option><option value="level">A level to reach</option><option value="milestone">Milestone (done / not done)</option></select></label>
-      <label className="f">Better when<select value={f.lower_is_better ? '1' : ''} onChange={e => set('lower_is_better', !!e.target.value)}><option value="">Higher</option><option value="1">Lower</option></select></label>
+    <div className="g3">
+      <label className="f">Where the actual comes from<select value={f.measure} onChange={e => set('measure', e.target.value)}><option value="manual">Checked in with evidence</option><option value="plan">From the annual plan (revenue / budget)</option><option value="deliverables">From deliverables accepted</option><option value="children">From the objectives below</option></select></label>
+      <label className="f">Unit of measure<input type="text" value={f.uom || ''} onChange={e => set('uom', e.target.value)} placeholder="units, ETB, %, days…" /></label>
+      <label className="f">Weight in the objective (%)<NumIn value={f.weight} onChange={v => set('weight', v)} /></label>
     </div>
-    {f.measure === 'plan' && <div className="card stack"><div className="g2">
+    <div className="card stack"><h3>How progress is calculated</h3>
+      <div className="g3">
+        <label className="f">Combine the months by<select value={f.aggregation} onChange={e => set('aggregation', e.target.value)}>{Object.entries(AGG_NAME).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        <label className="f">Direction<select value={f.direction} onChange={e => set('direction', e.target.value)}>{Object.entries(DIR_NAME).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        {f.direction === 'maintain' ? <label className="f">Allowed deviation (±)<NumIn value={f.tolerance} onChange={v => set('tolerance', v)} /></label> : <label className="f">Baseline (where we start)<NumIn value={f.baseline} onChange={v => set('baseline', v)} /></label>}
+      </div>
+      <p className="note">{f.aggregation === 'sum' ? 'Example: units produced, revenue, trainings held — each month adds to the total, so a quarter is the sum of its months.' : f.aggregation === 'average' ? 'Example: average on-time delivery or satisfaction — the quarter is the average of its months.' : f.aggregation === 'latest' ? 'Example: ISO certification progress, staff competency %, market share — the latest reading is the result.' : 'The best (or lowest) month in the period is the result.'} {f.direction === 'decrease' ? 'Lower is better: progress grows as the value falls from the baseline toward the target (costs, defects, downtime).' : f.direction === 'maintain' ? 'Full marks while the value stays within the allowed deviation of the target.' : ''}</p>
+    </div>
+    {f.measure === 'plan' && <div className="card stack"><h3>Link to the annual plan</h3><div className="g2">
       <label className="f">Plan section<select value={f.sec} onChange={e => { set('sec', e.target.value); set('groups', []); }}><option value="rev">Revenue</option><option value="cos">Cost of sales</option><option value="opex">Operating expenses</option><option value="capex">Capital spending</option><option value="proj">Projects</option></select></label>
       <label className="f">Figure<select value={f.metric} onChange={e => set('metric', e.target.value)}><option value="value">Amount (ETB)</option><option value="quantity">Quantity</option></select></label></div>
       <div><div className="note">Product groups / budget lines (none = all)</div><div className="chips">{grps.map(g => <button type="button" key={g} className={'chip' + (f.groups.includes(g) ? ' on' : '')} onClick={() => set('groups', f.groups.includes(g) ? f.groups.filter((x: string) => x !== g) : [...f.groups, g])}>{g}</button>)}</div></div>
-      <p className="note">Targets and actuals come from the plan and Finance actuals; a cost-saving key result should be linked to the budget lines it saves on, with "Better when: Lower".</p></div>}
-    {f.measure !== 'plan' && <div className="g4">
-      <label className="f">Baseline<NumIn value={f.baseline} onChange={v => set('baseline', v)} /></label>
-      <label className="f">Year target<NumIn value={f.year_target} onChange={v => set('year_target', v)} /></label>
-      {[1, 2, 3, 4].map(q => <label key={q} className="f">Q{q} target<NumIn value={f.t[q]} onChange={v => set('t', { ...f.t, [q]: v })} /></label>)}</div>}
-    <div className="g3"><label className="f">Weight in the objective (%)<NumIn value={f.weight} onChange={v => set('weight', v)} /></label>
+      <p className="note">Monthly targets and actuals come from the plan and Finance actuals. For cost-saving, link the budget lines and choose "Regressive".</p></div>}
+    {f.measure !== 'plan' && f.measure !== 'children' && f.measure !== 'deliverables' && <div className="card stack"><div className="row"><h3 style={{ flex: 1 }}>Targets</h3><Seg value={f.target_mode} options={[['annual', 'One annual target'], ['quarterly', 'By quarter'], ['monthly', 'By month']]} onChange={v => set('target_mode', v)} /></div>
+      <div className="g3"><label className="f">Year target<NumIn value={f.year_target} onChange={v => set('year_target', v)} /></label>
+        {f.target_mode !== 'annual' && <div className="f"><span>Fill from the year target</span><div className="row"><button type="button" className="btn sm" onClick={() => spread('even')}>Evenly</button><button type="button" className="btn sm" onClick={() => spread('ramp')}>Ramp up</button><button type="button" className="btn sm" onClick={() => spread('back')}>Front-loaded</button></div></div>}
+        {f.target_mode !== 'annual' && <div className="f"><span>Year implied by the periods</span> <b>{implied == null ? '—' : fmt(implied, 2)} {f.uom}</b></div>}</div>
+      {f.target_mode === 'quarterly' && <div className="g4">{[1, 2, 3, 4].map(q => <label key={q} className="f">Q{q} {isSum ? 'target' : 'level by end'}<NumIn value={f.t[q]} onChange={v => set('t', { ...f.t, [q]: v })} /></label>)}</div>}
+      {f.target_mode === 'monthly' && <div className="tw"><table className="t"><thead><tr>{MONTHS.map(m => <th key={m} className="n">{m}</th>)}</tr></thead><tbody><tr>{MONTHS.map((_, i) => <td key={i} className="n"><NumIn value={f.mt[i + 1]} w={68} onChange={v => set('mt', { ...f.mt, [i + 1]: v })} /></td>)}</tr></tbody></table></div>}
+      <p className="note">{f.target_mode === 'annual' ? (isSum ? 'Each quarter is measured against a quarter of the year target (each month a twelfth).' : 'Each period is measured against the point on a straight line from the baseline to the year target.') : 'Each period is measured against what you enter here.'}</p></div>}
+    {(f.measure === 'deliverables' || f.measure === 'children') && <p className="note">{f.measure === 'deliverables' ? 'Progress = weight of deliverables accepted ÷ weight of deliverables due in the period. Add deliverables in Work → Month.' : 'Progress = weighted score of the objectives that deliver this key result.'}</p>}
+    <div className="g2">
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label>
       <label className="f">Confidence<select value={f.confidence} onChange={e => set('confidence', e.target.value)}><option>High</option><option>Medium</option><option>Low</option></select></label></div>
     <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this key result?') && await save(() => sb.from('key_results').delete().eq('id', f.id), ['key_results', 'check_ins'], 'Deleted')) onClose(); }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.title?.trim()} onClick={go}>Save</button></div>
@@ -111,7 +138,7 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
 
 export default function OkrPlan() {
   const { db, unit } = useData(); const save = useSave();
-  const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
+  const [p, setP] = usePeriod(); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
   const unitOrg = unit;
@@ -133,14 +160,14 @@ export default function OkrPlan() {
       <li><b>Submit.</b> The OKR plan goes to Group Strategy, who approve it or return it with a note.</li></ol>
     <p>Pills warn when weights do not add up to 100%. Click a key result to see its detail; use Edit on it there via its objective.</p>
     <p>Objectives brought over from the ERP keep their ERP status; review and link the ones listed under "Not linked to a goal yet".</p></>}>
-    <Cmd right={<button className="btn pri" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button>} />
+    <Cmd right={<><PeriodPicker value={p} onChange={setP} /><button className="btn pri" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
     <StatusBar unit={unit} kind="okr" label="OKR plan 2026/27" />
     {issues.length > 0 && <div className="banner warn">{issues.length} objective{issues.length > 1 ? 's have' : ' has'} weights that do not add up to 100%.</div>}
     {!tree.length && <Empty>No strategic goals for this unit yet. Group Strategy loads them from the unit strategy.</Empty>}
-    {tree.map(({ p, goals }) => <section className="pil" key={p.id}><div className="pilh">{p.code} · {p.name}</div>
+    {tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
       {goals.map(g => <div className="goal" key={g.id}><div className="goalh">{g.code} {g.name}<button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: g.id })}>+ Objective</button></div>
-        {topObjectives(db, g.id).map(o => <ObjCard key={o.id} o={o} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>)}</section>)}
-    {loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
+        {topObjectives(db, g.id).map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>)}</section>)}
+    {loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
     {om && <ObjModal unit={unit} init={om} onClose={() => setOm(null)} />}
     {km && <KrModal unit={unit} init={km} onClose={() => setKm(null)} />}
     {kr && <KrDrawer id={kr} onClose={() => setKr(null)} />}
