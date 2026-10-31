@@ -95,7 +95,7 @@ export function KrDrawer({ id, onClose, p: p0 }: { id: string; onClose: () => vo
     <div><h4>Comments</h4>
       <div className="row"><textarea rows={2} value={cm} onChange={e => setCm(e.target.value)} placeholder="Ask, update or decide" /><button className="btn sm pri" disabled={!cm.trim()} onClick={async () => { if (await save(() => sb.from('comments').insert({ entity_type: 'kr', entity_id: id, body: cm.trim(), created_by: user.id }), ['comments'])) setCm(''); }}>Post</button></div>
       {comments.map(c => <div className="lg" key={c.id}><small>{c.created_at.slice(0, 16).replace('T', ' ')} · {db.profiles.find(pp => pp.id === c.created_by)?.full_name || 'someone'}</small><div>{c.body}</div></div>)}</div>
-    {can('editOKR') && <Link to="/plan/okr" onClick={onClose}>Edit in OKR plan →</Link>}
+    {can('editOKR') && <Link to="/studio/okr" onClick={onClose}>Edit in OKR plan →</Link>}
   </Drawer>;
 }
 
@@ -138,7 +138,7 @@ export function StrategyOverview() {
       <div className="tile"><div className="row"><Ring p={orgScore(db, unit, p)} size={46} /><div className="tl">{periodLabel(p)} score</div></div></div>
       <div className="tile" style={{ gridColumn: 'span 2' }}><div className="tl" style={{ marginBottom: 6 }}>Key results — {periodLabel(p)}</div><StatusStack counts={statusCounts(db, krs, p)} /></div>
     </div>
-    <div className="sec-h"><h2>Pillars and goals</h2><Link to="/strategy/map">Open the strategy map →</Link></div>
+    <div className="sec-h"><h2>Pillars and goals</h2><Link to="/insights/map">Open the strategy map →</Link></div>
     <div className="pilgrid">{tree.map(({ p: pil, goals }) => <div key={pil.id} className="pilcard">
       <div className="ph"><Ring p={pillarScore(db, pil.id, p)} size={42} /><b>{pil.code} · {pil.name}</b></div>
       {pil.description && <div className="note">{pil.description}</div>}
@@ -206,7 +206,7 @@ export function GroupView() {
     {pillars.map(pil => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
       <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Group goal</th><th>Served by</th><th>{periodLabel(p)}</th></tr></thead><tbody>
         {db.group_goals.filter(g => g.pillar_id === pil.id).sort((a, b) => a.sort - b.sort).map(g => { const ugs = db.unit_goals.filter(u => u.group_goal_id === g.id);
-          return <tr key={g.id}><td>{g.code} {g.name}</td><td>{ugs.length ? ugs.map(u => <div key={u.id} className="row"><Link to="/strategy/map" onClick={() => setUnit(u.unit_id)}>{byId(db.org_units, u.unit_id)?.name}</Link><span>{u.name}</span>{!u.link_confirmed && <Pill tone="warn">to confirm</Pill>}<span className="note">{pct(goalScore(db, u.id, p))}</span></div>) : <Pill tone="bad">No unit serving it</Pill>}</td>
+          return <tr key={g.id}><td>{g.code} {g.name}</td><td>{ugs.length ? ugs.map(u => <div key={u.id} className="row"><Link to="/insights/map" onClick={() => setUnit(u.unit_id)}>{byId(db.org_units, u.unit_id)?.name}</Link><span>{u.name}</span>{!u.link_confirmed && <Pill tone="warn">to confirm</Pill>}<span className="note">{pct(goalScore(db, u.id, p))}</span></div>) : <Pill tone="bad">No unit serving it</Pill>}</td>
             <td><Bar p={gScore(g)} /></td></tr>; })}
       </tbody></table></div></section>)}
     <p className="note">Months {MONTHS.join(' · ')} start on the Ethiopian month. Period months: {periodMonths(p).map(x => MONTHS[x - 1]).join(', ')}.</p>

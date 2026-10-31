@@ -20,10 +20,12 @@ const SECN: Record<string, string> = { rev: 'Revenue', cos: 'Cost of sales', ope
 function groupsOf(lines: Row[]) { const m = new Map<string, Row[]>(); lines.forEach(l => { const g = l.line_group || 'Other'; m.set(g, [...(m.get(g) || []), l]); }); return Array.from(m.entries()); }
 
 function PlanGrid({ unit, sec, view, editable }: { unit: string; sec: string; view: 'value' | 'qty' | 'pva'; editable: boolean }) {
-  const { db } = useData(); const save = useSave(); const [open, setOpen] = useState<Record<string, boolean>>({});
+  const { db } = useData(); const save = useSave(); const [open, setOpen] = useState<Record<string, boolean>>({}); const [flt, setFlt] = useState(''); const [add, setAdd] = useState(false);
   if (!db) return null;
-  const lines = linesOf(db, unit, sec).sort((a, b) => a.sort - b.sort);
-  if (!lines.length) return <Empty>No {SECN[sec].toLowerCase()} lines in this unit's plan.</Empty>;
+  const all = linesOf(db, unit, sec).sort((a, b) => a.sort - b.sort);
+  const lines = all.filter(l => !flt || (l.name + ' ' + (l.line_group || '') + ' ' + (l.code || '')).toLowerCase().includes(flt.toLowerCase()));
+  const tools = <div className="row" style={{ marginBottom: 8 }}><input type="text" placeholder="Filter lines" value={flt} onChange={e => setFlt(e.target.value)} /><button className="btn sm" onClick={() => { const g: Record<string, boolean> = {}; groupsOf(lines).forEach(([k]) => { g[k] = true; }); setOpen(Object.keys(open).length ? {} : g); }}>{Object.keys(open).length ? 'Collapse all' : 'Expand all'}</button><span className="sp" /><span className="note">{lines.length} of {all.length} lines</span>{editable && <button className="btn sm pri" onClick={() => setAdd(true)}>+ Line</button>}</div>;
+  if (!all.length) return <>{editable && <button className="btn pri" onClick={() => setAdd(true)}>+ Line</button>}<Empty>No {SECN[sec].toLowerCase()} lines in this unit's plan.</Empty>{add && <LineModal unit={unit} sec={sec} onClose={() => setAdd(false)} />}</>;
   const last = lastActualMonth(db, unit);
   const setCell = (l: Row, m: number, v: number | null, kind: 'qty' | 'val') => {
     const q = lineQty(l), val = lineVals(l);
@@ -32,7 +34,7 @@ function PlanGrid({ unit, sec, view, editable }: { unit: string; sec: string; vi
   };
   const setPrice = (l: Row, p: number | null) => save(() => sb.from('plan_lines').update({ price: p, val: lineQty(l).map(q => q * (p || 0)) }).eq('id', l.id), ['plan_lines'], 'Price updated');
   const grand = Array.from({ length: 12 }, (_, i) => sum(lines.map(l => lineVals(l)[i])));
-  return <div className="tw"><table className="t">
+  return <>{tools}{add && <LineModal unit={unit} sec={sec} onClose={() => setAdd(false)} />}<div className="tw"><table className="t">
     <thead><tr><th className="first">{view === 'pva' ? 'Group' : 'Line'}</th>{view === 'qty' && <th className="n">Price</th>}{MONTHS.map((m, i) => <th key={m} className="n">{m}{view === 'pva' && i < last ? ' ✓' : ''}</th>)}<th className="n">Year</th>{view === 'pva' && <><th className="n">YTD plan</th><th className="n">YTD actual</th><th>Achieved</th></>}</tr></thead>
     <tbody>
       {groupsOf(lines).map(([g, ls]) => {
@@ -50,7 +52,24 @@ function PlanGrid({ unit, sec, view, editable }: { unit: string; sec: string; vi
               <td className="n">{view === 'qty' ? fmt(sum(v), 2) : money(sum(v))}</td></tr>; }) : [])];
       })}
       <tr className="b"><td className="first">Total {SECN[sec].toLowerCase()}</td>{view === 'qty' && <td />}{grand.map((v, i) => <td key={i} className="n">{view === 'qty' ? '' : money(v)}</td>)}<td className="n">{money(sum(grand))}</td>{view === 'pva' && (() => { const p = sum(grand.slice(0, last)); const a = actualBy(db, unit, sec, Array.from({ length: last }, (_, i) => i + 1)); return <><td className="n">{money(p)}</td><td className="n">{money(a)}</td><td>{a != null && p ? pct(a / p) : ''}</td></>; })()}</tr>
-    </tbody></table></div>;
+    </tbody></table></div></>;
+}
+
+function LineModal({ unit, sec, onClose }: { unit: string; sec: string; onClose: () => void }) {
+  const { db } = useData(); const save = useSave(); const [f, setF] = useState<Row>({ kind: sec === 'rev' ? 'qty' : 'value', spread: 'even' }); if (!db) return null;
+  const groups = Array.from(new Set(linesOf(db, unit, sec).map(l => l.line_group).filter(Boolean)));
+  const isQty = f.kind === 'qty'; const annual = Number(f.annual || 0);
+  const months = Array.from({ length: 12 }, (_, i) => f.spread === 'even' ? annual / 12 : i < 3 ? 0 : annual / 9);
+  return <Modal title={`New ${SECN[sec].toLowerCase()} line`} onClose={onClose}>
+    <div className="g2"><label className="f">Group<input type="text" list="lgroups" value={f.line_group || ''} onChange={e => setF({ ...f, line_group: e.target.value })} /><datalist id="lgroups">{groups.map(g => <option key={g} value={g} />)}</datalist></label><label className="f">Line name<input type="text" value={f.name || ''} onChange={e => setF({ ...f, name: e.target.value })} /></label></div>
+    <div className="g3">{sec === 'rev' && <label className="f">Planned as<select value={f.kind} onChange={e => setF({ ...f, kind: e.target.value })}><option value="qty">Quantity × price</option><option value="value">Amount</option></select></label>}
+      {isQty && <label className="f">Unit price (ETB)<NumIn value={f.price} onChange={v => setF({ ...f, price: v })} /></label>}<label className="f">{isQty ? 'Unit' : 'Code'}<input type="text" value={(isQty ? f.uom : f.code) || ''} onChange={e => setF({ ...f, [isQty ? 'uom' : 'code']: e.target.value })} /></label></div>
+    <div className="g2"><label className="f">{isQty ? 'Quantity for the year' : 'Amount for the year (ETB)'}<NumIn value={f.annual} onChange={v => setF({ ...f, annual: v })} w={160} /></label><label className="f">Spread<select value={f.spread} onChange={e => setF({ ...f, spread: e.target.value })}><option value="even">Evenly over 12 months</option><option value="late">From Q2 onward</option></select></label></div>
+    <p className="note">Added to the plan in force; the approved baseline stays as it was (the line shows as a change). Adjust months in the grid after saving.</p>
+    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.name?.trim() || !annual} onClick={async () => {
+      const q = isQty ? months.map(x => Math.round(x * 100) / 100) : null; const val = isQty ? q!.map(x => x * Number(f.price || 0)) : months.map(x => Math.round(x));
+      if (await save(() => sb.from('plan_lines').insert({ unit_id: unit, fiscal_year: '2026/27', section: sec, line_group: f.line_group || 'Other', name: f.name.trim(), code: f.code || null, uom: isQty ? f.uom || null : 'ETB', kind: isQty ? 'qty' : 'value', price: isQty ? f.price : null, qty0: isQty ? Array(12).fill(0) : null, qty: q, val0: Array(12).fill(0), val, sort: 999 }), ['plan_lines'], 'Line added')) onClose(); }}>Add line</button></div>
+  </Modal>;
 }
 
 /* ---------- Niyat-style project revenue: engagements billed by milestone ---------- */

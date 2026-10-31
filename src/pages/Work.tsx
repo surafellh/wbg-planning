@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
+import { useData, useSave, byId, posName, notifyPositions, managerOf, type DB, type Row } from '../lib/data';
+import { Thread } from '../lib/social';
 import { sb } from '../lib/supabase';
 import { weekStart, weekLabel, ymd, monthOf, MONTHS, krsOf, cutoffOf, curMonth, FY, krState, pct, workStats, delivScore, periodLabel, currentPeriod, qOfMonth } from '../lib/calc';
 import { Page, Seg, Pill, Empty, Modal, NumIn, Drawer, Bar, UnitPicker, StatePill } from '../lib/ui';
@@ -32,7 +33,7 @@ function Comments({ entity, id }: { entity: string; id: string }) {
     <div className="row"><input type="text" style={{ flex: 1 }} value={t} onChange={e => setT(e.target.value)} placeholder="Comment, ask, @mention by name" onKeyDown={async e => { if (e.key === 'Enter' && t.trim()) { if (await save(() => sb.from('comments').insert({ entity_type: entity, entity_id: id, body: t.trim(), created_by: user.id }), ['comments'])) setT(''); } }} /></div></div>;
 }
 
-function ActivityRow({ a, editable, onOpen }: { a: Row; editable: boolean; onOpen: (a: Row) => void }) {
+export function ActivityRow({ a, editable, onOpen }: { a: Row; editable: boolean; onOpen: (a: Row) => void }) {
   const { db } = useData(); const save = useSave(); if (!db) return null;
   const upd = (patch: Row) => save(() => sb.from('activities').update(patch).eq('id', a.id), ['activities']);
   const { d, k } = linkPath(db, a); const nc = db.comments.filter(c => c.entity_type === 'activity' && c.entity_id === a.id).length;
@@ -47,7 +48,7 @@ function ActivityRow({ a, editable, onOpen }: { a: Row; editable: boolean; onOpe
   </div>;
 }
 
-function ActivityDrawer({ a0, onClose, canEdit }: { a0: Row; onClose: () => void; canEdit: boolean }) {
+export function ActivityDrawer({ a0, onClose, canEdit }: { a0: Row; onClose: () => void; canEdit: boolean }) {
   const { db, units } = useData(); const save = useSave(); const [f, setF] = useState<Row>({ ...a0 });
   if (!db) return null; const a = byId(db.activities, a0.id) || a0; const { d, k, o } = linkPath(db, a);
   const myDels = db.deliverables.filter(x => x.owner_position_id === a.owner_position_id && x.status !== 'removed' && Math.abs(x.month - monthOf(FY, new Date(a.week_start))) <= 1);
@@ -67,16 +68,16 @@ function ActivityDrawer({ a0, onClose, canEdit }: { a0: Row; onClose: () => void
     <div className={'card stack' + (a.status === 'Stuck' || a0._block ? '' : '')} style={{ padding: 12, background: a.status === 'Stuck' || a0._block ? 'var(--bad-soft)' : undefined }}><h4>Blocker</h4>
       {canEdit ? <><label className="f">What is in the way<textarea rows={2} value={f.blocker || ''} onChange={e => setF({ ...f, blocker: e.target.value })} /></label>
         <label className="f">Help needed from<select value={f.help_from_unit || ''} onChange={e => setF({ ...f, help_from_unit: e.target.value || null })}><option value="">My own team</option>{db.org_units.filter(u => u.kind === 'unit').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
-        <div className="row"><button className="btn sm pri" disabled={!f.blocker?.trim()} onClick={() => upd({ status: 'Stuck', blocker: f.blocker.trim(), help_from_unit: f.help_from_unit || null }, 'Marked stuck — your manager will see it')}>Mark stuck</button>{a.status === 'Stuck' && <button className="btn sm" onClick={() => upd({ status: 'In progress', blocker: null, help_from_unit: null }, 'Unblocked')}>Resolved</button>}</div></>
+        <div className="row"><button className="btn sm pri" disabled={!f.blocker?.trim()} onClick={async () => { await upd({ status: 'Stuck', blocker: f.blocker.trim(), help_from_unit: f.help_from_unit || null }, 'Marked stuck — your manager will see it'); const me2 = byId(db.positions, a.owner_position_id); const targets = [me2 && managerOf(db, me2)?.id, ...(f.help_from_unit ? db.positions.filter(x => x.org_unit_id === f.help_from_unit && x.level !== 'employee').map(x => x.id) : [])]; await notifyPositions(db, targets, 'blocker', `Stuck: ${a.title} — ${f.blocker.trim()}`, '/inbox'); }}>Mark stuck</button>{a.status === 'Stuck' && <button className="btn sm" onClick={() => upd({ status: 'In progress', blocker: null, help_from_unit: null }, 'Unblocked')}>Resolved</button>}</div></>
         : a.blocker ? <div>{a.blocker}{a.help_from_unit && <div className="mini">Needs help from {byId(db.org_units, a.help_from_unit)?.name}</div>}</div> : <p className="note">No blocker.</p>}
       {!canEdit && a.status === 'Stuck' && <button className="btn sm" onClick={() => upd({ status: 'In progress', blocker: null }, 'Unblocked')}>Mark resolved</button>}
       {units.length === 0 && null}</div>
-    <div><h4>Comments</h4><Comments entity="activity" id={a.id} /></div>
+    <div><h4>Comments</h4><Thread entity="activity" id={a.id} link="/week" title={a.title} /></div>
     {canEdit && <div className="row"><button className="btn sm" onClick={() => upd({ week_start: next }, 'Moved to next week').then(onClose)}>Move to next week</button><span className="sp" /><button className="btn sm danger" onClick={async () => { if (confirm('Delete this activity?') && await save(() => sb.from('activities').delete().eq('id', a.id), ['activities'], 'Deleted')) onClose(); }}>Delete</button></div>}
   </Drawer>;
 }
 
-function WeekReview({ me, wk, mine }: { me: Row; wk: string; mine: boolean }) {
+export function WeekReview({ me, wk, mine }: { me: Row; wk: string; mine: boolean }) {
   const { db, user, can } = useData(); const save = useSave();
   const r = db?.week_reviews.find(x => x.position_id === me.id && x.week_start === wk) || {} as Row;
   const [f, setF] = useState<Row>({ wins: r.wins || '', blockers: r.blockers || '', asks: r.asks || '' });
@@ -84,19 +85,19 @@ function WeekReview({ me, wk, mine }: { me: Row; wk: string; mine: boolean }) {
   const put = (patch: Row, msg: string) => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, ...f, ...patch }, { onConflict: 'position_id,week_start' }), ['week_reviews'], msg);
   return <div className="card stack"><div className="row"><h3 style={{ flex: 1 }}>Week summary</h3>{r.submitted_at ? <Pill tone="good">Submitted {r.submitted_at.slice(5, 16).replace('T', ' ')}</Pill> : <Pill tone="warn">Not submitted</Pill>}</div>
     {(['wins', 'blockers', 'asks'] as const).map(k => <label key={k} className="f">{({ wins: 'Wins — what got done that matters', blockers: 'Blockers — what slowed us', asks: 'Asks — help or decisions needed' })[k]}<textarea rows={2} value={f[k]} disabled={!mine} onChange={e => setF({ ...f, [k]: e.target.value })} /></label>)}
-    {mine && <div className="row end"><button className="btn" onClick={() => put({}, 'Saved')}>Save</button><button className="btn pri" onClick={() => put({ submitted_at: new Date().toISOString() }, 'Week submitted to your manager')}>Submit week</button></div>}
+    {mine && <div className="row end"><button className="btn" onClick={() => put({}, 'Saved')}>Save</button><button className="btn pri" onClick={() => put({ submitted_at: new Date().toISOString() }, 'Week submitted to your manager').then(() => notifyPositions(db, [managerOf(db, me)?.id], 'week', `${me.holder_name} submitted the week summary`, '/inbox'))}>Submit week</button></div>}
     {(r.feedback || r.rating) && <div className="banner good"><b>Manager feedback</b> {r.rating ? '★'.repeat(r.rating) : ''} {r.feedback}</div>}
     {!mine && can('managePeople') && <FeedbackBox me={me} wk={wk} r={r} userId={user.id} />}
   </div>;
 }
 function FeedbackBox({ me, wk, r, userId }: { me: Row; wk: string; r: Row; userId: string }) {
-  const save = useSave(); const [fb, setFb] = useState(r.feedback || ''); const [rt, setRt] = useState<number>(r.rating || 0);
+  const save = useSave(); const { db } = useData(); const useDataDb = { current: db }; const [fb, setFb] = useState(r.feedback || ''); const [rt, setRt] = useState<number>(r.rating || 0);
   return <div className="stack"><label className="f">Feedback to {me.holder_name}<textarea rows={2} value={fb} onChange={e => setFb(e.target.value)} /></label>
     <div className="row"><span className="mini">Rating</span>{[1, 2, 3, 4, 5].map(n => <button key={n} className={'btn sm' + (rt >= n ? ' pri' : '')} onClick={() => setRt(n)}>★</button>)}<span className="sp" />
-      <button className="btn sm pri" onClick={() => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, feedback: fb || null, rating: rt || null, feedback_by: userId, feedback_at: new Date().toISOString() }, { onConflict: 'position_id,week_start' }), ['week_reviews'], 'Feedback sent')}>Send feedback</button></div></div>;
+      <button className="btn sm pri" onClick={() => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, feedback: fb || null, rating: rt || null, feedback_by: userId, feedback_at: new Date().toISOString() }, { onConflict: 'position_id,week_start' }), ['week_reviews'], 'Feedback sent').then(() => notifyPositions(useDataDb.current!, [me.id], 'feedback', `Feedback on your week ${rt ? '★'.repeat(rt) : ''}`, '/week', fb || undefined))}>Send feedback</button></div></div>;
 }
 
-function MyWeek({ who, ws, setWs }: { who: Row; ws: Date; setWs: (d: Date) => void }) {
+export function MyWeek({ who, ws, setWs }: { who: Row; ws: Date; setWs: (d: Date) => void }) {
   const { db, me, user, can } = useData(); const save = useSave(); const [open, setOpen] = useState<Row | null>(null);
   const [t, setT] = useState(''); const [link, setLink] = useState(''); if (!db || !me) return null;
   const mine = who.id === me.id; const editable = mine || can('managePeople'); const wk = ymd(ws); const month = monthOf(FY, new Date(ws.getTime() + 3 * 864e5));
@@ -129,13 +130,13 @@ function MyWeek({ who, ws, setWs }: { who: Row; ws: Date; setWs: (d: Date) => vo
       <div className="card"><h3>This week</h3><div className="g2" style={{ marginTop: 8 }}><div className="tile"><div className="tv">{pct(ws2.completion)}</div><div className="tl">Done</div></div><div className={'tile ' + (ws2.stuck ? 'bad' : '')}><div className="tv">{ws2.stuck}</div><div className="tl">Stuck</div></div></div>
         <div className="mini" style={{ marginTop: 8 }}>{acts.filter(a => a.top).length}/3 top priorities set · {acts.filter(a => !a.deliverable_id && !a.key_result_id).length} not linked to the plan</div></div>
       <WeekReview me={who} wk={wk} mine={mine} />
-      <div className="card"><h3>{MONTHS[month - 1]} deliverables</h3>{myDels.length ? myDels.map(d => <div key={d.id} className="lg row"><span style={{ flex: 1 }}>{d.title}<div className="mini">{db.activities.filter(a => a.deliverable_id === d.id).length} activities</div></span><Pill tone={tone(d.status)}>{DSTATUS[d.status]?.split(' —')[0]}</Pill></div>) : <p className="note">None for this month.</p>}<Link to="/work?tab=month">Open month →</Link></div>
+      <div className="card"><h3>{MONTHS[month - 1]} deliverables</h3>{myDels.length ? myDels.map(d => <div key={d.id} className="lg row"><span style={{ flex: 1 }}>{d.title}<div className="mini">{db.activities.filter(a => a.deliverable_id === d.id).length} activities</div></span><Pill tone={tone(d.status)}>{DSTATUS[d.status]?.split(' —')[0]}</Pill></div>) : <p className="note">None for this month.</p>}<Link to="/deliverables">Open month →</Link></div>
     </div>
     {open && <ActivityDrawer a0={open} canEdit={editable} onClose={() => setOpen(null)} />}
   </div>;
 }
 
-function MonthView({ people, lead }: { people: Row[]; lead: boolean }) {
+export function MonthView({ people, lead }: { people: Row[]; lead: boolean }) {
   const { db, me, can, unit } = useData(); const save = useSave(); const [m, setM] = useState(curMonth()); const [dm, setDm] = useState<Row | null>(null); const [acc, setAcc] = useState<Row | null>(null);
   if (!db || !me) return null; const ids = new Set(people.map(p => p.id));
   const dels = db.deliverables.filter(d => d.month === m && ids.has(d.owner_position_id) && d.status !== 'removed');
@@ -151,23 +152,23 @@ function MonthView({ people, lead }: { people: Row[]; lead: boolean }) {
             return <tr key={d.id}><td style={{ width: '40%' }}><b>{d.title}</b>{d.target != null && <div className="mini">Target {d.target} {d.uom || ''}</div>}{d.evidence_url && <div><a href={d.evidence_url} target="_blank" rel="noreferrer">evidence</a></div>}{d.feedback && <div className="mini">Feedback: {d.feedback}</div>}</td>
               <td>{posName(db, d.owner_position_id)}<div className="mini">{na.length} activities · {na.filter(a => a.status === 'Done').length} done</div></td><td className="n">{d.weight != null ? d.weight + '%' : ''}</td>
               <td><Pill tone={tone(d.status)}>{DSTATUS[d.status]}</Pill>{d.rating ? <div className="mini">{'★'.repeat(d.rating)}</div> : null}</td>
-              <td><div className="row" style={{ justifyContent: 'flex-end' }}>{own && ['planned', 'returned'].includes(d.status) && <button className="btn sm pri" onClick={() => { const ev = prompt('Link to evidence (optional)') ?? ''; save(() => sb.from('deliverables').update({ status: 'done', evidence_url: ev || null, done_at: new Date().toISOString() }).eq('id', d.id), ['deliverables'], 'Delivered — sent for acceptance'); }}>Deliver</button>}
+              <td><div className="row" style={{ justifyContent: 'flex-end' }}>{own && ['planned', 'returned'].includes(d.status) && <button className="btn sm pri" onClick={() => { const ev = prompt('Link to evidence (optional)') ?? ''; save(() => sb.from('deliverables').update({ status: 'done', evidence_url: ev || null, done_at: new Date().toISOString() }).eq('id', d.id), ['deliverables'], 'Delivered — sent for acceptance').then(() => { const o = byId(db.positions, d.owner_position_id); return notifyPositions(db, [o && managerOf(db, o)?.id], 'deliverable', `${o?.holder_name} delivered: ${d.title}`, '/inbox'); }); }}>Deliver</button>}
                 {mgr && d.status === 'done' && <button className="btn sm pri" onClick={() => setAcc(d)}>Review</button>}
                 {lead && <button className="btn sm" onClick={() => setDm(d)}>Edit</button>}</div></td></tr>; })}</tbody></table></div></div>; })}
     {dm && <DelModal init={dm} team={people} onClose={() => setDm(null)} />}
     {acc && <Modal title="Review deliverable" onClose={() => setAcc(null)}><AcceptForm d={acc} onDone={() => setAcc(null)} /></Modal>}
   </div>;
 }
-function AcceptForm({ d, onDone }: { d: Row; onDone: () => void }) {
-  const save = useSave(); const [rt, setRt] = useState(4); const [fb, setFb] = useState(''); const [act, setAct] = useState<number | null>(d.target);
+export function AcceptForm({ d, onDone }: { d: Row; onDone: () => void }) {
+  const save = useSave(); const { db } = useData(); const [rt, setRt] = useState(4); const [fb, setFb] = useState(''); const [act, setAct] = useState<number | null>(d.target);
   return <div className="stack"><b>{d.title}</b>{d.evidence_url && <a href={d.evidence_url} target="_blank" rel="noreferrer">Open evidence</a>}
     {d.target != null && <label className="f">Actual delivered ({d.uom || 'value'})<NumIn value={act} onChange={setAct} /></label>}
     <div className="row"><span className="mini">Quality</span>{[1, 2, 3, 4, 5].map(n => <button key={n} className={'btn sm' + (rt >= n ? ' pri' : '')} onClick={() => setRt(n)}>★</button>)}</div>
     <label className="f">Feedback<textarea rows={2} value={fb} onChange={e => setFb(e.target.value)} /></label>
-    <div className="row end"><button className="btn" onClick={async () => { if (await save(() => sb.from('deliverables').update({ status: 'returned', feedback: fb || null }).eq('id', d.id), ['deliverables'], 'Returned for rework')) onDone(); }}>Return for rework</button>
-      <button className="btn pri" onClick={async () => { if (await save(() => sb.from('deliverables').update({ status: 'accepted', rating: rt, feedback: fb || null, actual: act, accepted_at: new Date().toISOString() }).eq('id', d.id), ['deliverables'], 'Accepted')) onDone(); }}>Accept</button></div></div>;
+    <div className="row end"><button className="btn" onClick={async () => { if (await save(() => sb.from('deliverables').update({ status: 'returned', feedback: fb || null }).eq('id', d.id), ['deliverables'], 'Returned for rework')) { if (db) await notifyPositions(db, [d.owner_position_id], 'deliverable', `Returned for rework: ${d.title}`, '/deliverables', fb || undefined); onDone(); } }}>Return for rework</button>
+      <button className="btn pri" onClick={async () => { if (await save(() => sb.from('deliverables').update({ status: 'accepted', rating: rt, feedback: fb || null, actual: act, accepted_at: new Date().toISOString() }).eq('id', d.id), ['deliverables'], 'Accepted')) { if (db) await notifyPositions(db, [d.owner_position_id], 'deliverable', `Accepted ${'★'.repeat(rt)}: ${d.title}`, '/deliverables', fb || undefined); onDone(); } }}>Accept</button></div></div>;
 }
-function DelModal({ init, team, onClose }: { init: Row; team: Row[]; onClose: () => void }) {
+export function DelModal({ init, team, onClose }: { init: Row; team: Row[]; onClose: () => void }) {
   const { db, user, unit } = useData(); const save = useSave(); const [f, setF] = useState<Row>(init); if (!db) return null;
   const u = f.unit_id || unit; const krs = db.objectives.filter(o => o.unit_id === u).flatMap(o => krsOf(db, o.id));
   const set = (k: string, v: any) => setF(x => ({ ...x, [k]: v }));
@@ -185,7 +186,7 @@ function DelModal({ init, team, onClose }: { init: Row; team: Row[]; onClose: ()
   </Modal>;
 }
 
-function CheckIns({ people, lead }: { people: Row[]; lead: boolean }) {
+export function CheckIns({ people, lead }: { people: Row[]; lead: boolean }) {
   const { db, me } = useData(); const [kr, setKr] = useState<string | null>(null); if (!db || !me) return null;
   const ids = new Set(people.map(p => p.id)); const p = currentPeriod('Q');
   const krs = db.key_results.filter(k => k.measure === 'manual' && (lead ? ids.has(k.owner_position_id) : k.owner_position_id === me.id));
@@ -201,7 +202,7 @@ function CheckIns({ people, lead }: { people: Row[]; lead: boolean }) {
   </div>;
 }
 
-function TeamView({ people, ws, setWs }: { people: Row[]; ws: Date; setWs: (d: Date) => void }) {
+export function TeamView({ people, ws, setWs }: { people: Row[]; ws: Date; setWs: (d: Date) => void }) {
   const { db } = useData(); const [pick, setPick] = useState<Row | null>(null); if (!db) return null;
   const wk = ymd(ws); const cut = cutoffOf(ws).toISOString(); const tot = workStats(db, new Set(people.map(p => p.id)), wk);
   const pend = db.deliverables.filter(d => d.status === 'done' && people.some(p => p.id === d.owner_position_id));
@@ -220,13 +221,13 @@ function TeamView({ people, ws, setWs }: { people: Row[]; ws: Date; setWs: (d: D
     {pick && <Drawer title={pick.holder_name} onClose={() => setPick(null)}><MyWeekCompact who={pick} wk={wk} /><WeekReview me={pick} wk={wk} mine={false} /></Drawer>}
   </div>;
 }
-function MyWeekCompact({ who, wk }: { who: Row; wk: string }) {
+export function MyWeekCompact({ who, wk }: { who: Row; wk: string }) {
   const { db, can } = useData(); const [open, setOpen] = useState<Row | null>(null); if (!db) return null;
   const acts = db.activities.filter(a => a.week_start === wk && a.owner_position_id === who.id);
   return <div className="card" style={{ padding: 0 }}>{acts.length ? acts.map(a => <ActivityRow key={a.id} a={a} editable={can('managePeople')} onOpen={setOpen} />) : <p className="note" style={{ padding: 12 }}>No activities this week.</p>}{open && <ActivityDrawer a0={open} canEdit={can('managePeople')} onClose={() => setOpen(null)} />}</div>;
 }
 
-function Blockers({ people }: { people: Row[] }) {
+export function Blockers({ people }: { people: Row[] }) {
   const { db, unit, me } = useData(); const [open, setOpen] = useState<Row | null>(null); if (!db || !me) return null;
   const ids = new Set(people.map(p => p.id)); const myUnit = me.unit_id || unit;
   const stuck = db.activities.filter(a => a.status === 'Stuck' && (ids.has(a.owner_position_id) || a.help_from_unit === myUnit)).sort((a, b) => a.week_start.localeCompare(b.week_start));

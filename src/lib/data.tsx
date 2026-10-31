@@ -92,6 +92,36 @@ export function useSave() {
   }, [reload, toast]);
 }
 
+/** Framework terminology (OKR, Balanced Scorecard or KPI) — every screen uses these words. */
+export const FRAMEWORKS: Record<string, { name: string; labels: Record<string, string> }> = {
+  okr: { name: 'OKR — Objectives and Key Results', labels: { pillar: 'Pillar', goal: 'Strategic goal', objective: 'Objective', key_result: 'Key result', deliverable: 'Deliverable', activity: 'Activity' } },
+  bsc: { name: 'Balanced Scorecard', labels: { pillar: 'Perspective', goal: 'Strategic objective', objective: 'Objective', key_result: 'Measure (KPI)', deliverable: 'Initiative milestone', activity: 'Activity' } },
+  kpi: { name: 'KPI / Management by Objectives', labels: { pillar: 'Focus area', goal: 'Goal', objective: 'Objective', key_result: 'KPI', deliverable: 'Output', activity: 'Task' } },
+};
+export function useTerms() {
+  const { db } = useData(); const f = db?.settings.framework || { type: 'okr' };
+  const base = (FRAMEWORKS[f.type] || FRAMEWORKS.okr).labels; const L = { ...base, ...(f.labels || {}) };
+  const t = (k: string, plural = false) => { const w = L[k] || k; return plural ? (w.endsWith('y') ? w.slice(0, -1) + 'ies' : w.endsWith('s') ? w : w + 's') : w; };
+  return { t, type: f.type as string };
+}
+/** Which windows a role can open (configurable in Studio → Framework & rules). */
+export function useWindows() {
+  const { db, role } = useData(); const w = db?.settings.windows || {};
+  const has = (k: string, def: string[]) => ((w[k] as string[]) || def).includes(role);
+  return { insights: has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']), studio: has('studio', ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head']), studioAdmin: has('studio_admin', ['super_admin', 'group_strategy']) };
+}
+/** Send a notification to positions' linked users (no-op for vacant or unlinked positions). */
+export async function notifyPositions(db: DB, posIds: (string | null | undefined)[], kind: string, title: string, link?: string, body?: string) {
+  const users = posIds.map(id => db.positions.find(p => p.id === id)?.user_id).filter(Boolean);
+  if (users.length) { const { sb } = await import('./supabase'); await sb.rpc('notify', { user_ids: users, kind, title, body: body || null, link: link || null }); }
+}
+/** The head position of a position's organisation (or of the level above when it heads its own). */
+export function managerOf(db: DB, pos: Row): Row | undefined {
+  let org = db.org_units.find(u => u.id === pos.org_unit_id);
+  while (org) { const h = db.positions.find(p => p.org_unit_id === org!.id && p.level !== 'employee' && p.id !== pos.id); if (h) return h; org = db.org_units.find(u => u.id === org!.parent_id); }
+  return undefined;
+}
+
 // convenience lookups
 export const byId = (rows: Row[], id: any) => rows.find(r => r.id === id);
 export function orgPath(db: DB, id: string | null | undefined): Row[] { const out: Row[] = []; let cur = byId(db.org_units, id); while (cur) { out.unshift(cur); cur = byId(db.org_units, cur.parent_id); } return out; }

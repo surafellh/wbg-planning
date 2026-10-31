@@ -1,0 +1,155 @@
+/* STUDIO WINDOW — advanced, editable views: process monitor, strategy builder, scorecards, framework & rules, audit. */
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useData, useSave, useTerms, byId, posName, ROLE_NAME, FRAMEWORKS, type DB, type Row } from '../../lib/data';
+import { sb } from '../../lib/supabase';
+import { krsOf, krState, currentPeriod, subtreeIds, weekStart, ymd, workStats, delivScore, lastActualMonth, MONTHS, qOfMonth, curMonth, pct, fmt, krTarget } from '../../lib/calc';
+import { Page, Cmd, Pill, Modal, Empty, Seg, NumIn, Bar, UnitPicker } from '../../lib/ui';
+import { planStatus } from '../OkrPlan';
+import { openRescope } from '../AnnualPlan';
+import { proposeScorecard, ScorecardEditor } from '../work/Inbox';
+import { SettingsRules } from '../Settings';
+
+/* ---------- Process monitor (planning cycle and system health, like a submission monitor) ---------- */
+type Cell = { v: string; tone: 'good' | 'warn' | 'bad' | 'none'; tip?: string };
+const rag = (x: number | null, g = 0.8, w = 0.5): 'good' | 'warn' | 'bad' | 'none' => x == null ? 'none' : x >= g ? 'good' : x >= w ? 'warn' : 'bad';
+function unitHealth(db: DB, u: Row): Record<string, Cell> {
+  const ids = subtreeIds(db, u.id); const pos = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name); const posIds = new Set(pos.map(x => x.id));
+  const objs = db.objectives.filter(o => o.unit_id === u.id); const krs = objs.flatMap(o => krsOf(db, o.id)); const p = currentPeriod('Q');
+  const okr = planStatus(db, u.id, 'okr')?.status || 'Draft'; const ann = planStatus(db, u.id, 'annual')?.status || 'Draft';
+  const withKr = objs.filter(o => krsOf(db, o.id).length || db.objectives.some(c => c.parent_objective_id === o.id)).length;
+  const withT = krs.filter(k => k.measure !== 'manual' || krTarget(db, k, p) != null).length;
+  const man = krs.filter(k => k.measure === 'manual'); const fresh = man.filter(k => db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString())).length;
+  const linkedUsers = pos.filter(x => x.user_id).length; const ws = workStats(db, posIds, ymd(weekStart(new Date(Date.now() - 7 * 864e5))));
+  const dm = delivScore(db, posIds, { t: 'M', n: curMonth() }); const q = qOfMonth(curMonth());
+  const cards = db.scorecards.filter(s => posIds.has(s.position_id) && s.quarter === q); const agreed = cards.filter(s => s.status === 'Agreed').length;
+  const last = lastActualMonth(db, u.id); const hasPlan = db.plan_lines.some(l => l.unit_id === u.id);
+  const pend = objs.filter(o => o.status === 'Submitted').length + db.deliverables.filter(d => posIds.has(d.owner_position_id) && d.status === 'done').length;
+  const st = (s: string): Cell => ({ v: s, tone: s === 'Approved' ? 'good' : s === 'Submitted' || s === 'Endorsed' ? 'warn' : s === 'Returned' ? 'bad' : 'none' });
+  return {
+    okr: st(okr), annual: st(ann),
+    struct: { v: objs.length ? pct(withKr / objs.length) : '—', tone: rag(objs.length ? withKr / objs.length : null), tip: `${withKr}/${objs.length} objectives have key results or objectives below` },
+    targets: { v: krs.length ? pct(withT / krs.length) : '—', tone: rag(krs.length ? withT / krs.length : null), tip: `${withT}/${krs.length} key results have a Q${p.n} target` },
+    checkins: { v: man.length ? pct(fresh / man.length) : '—', tone: rag(man.length ? fresh / man.length : null, .7, .3), tip: `${fresh}/${man.length} checked in within 30 days` },
+    users: { v: `${linkedUsers}/${pos.length}`, tone: rag(pos.length ? linkedUsers / pos.length : null, .6, .2), tip: 'People with a linked sign-in' },
+    weekly: { v: linkedUsers ? pct(ws.people / linkedUsers) : '—', tone: rag(linkedUsers ? ws.people / linkedUsers : null, .7, .4), tip: `${ws.people} people logged activities last week` },
+    deliv: { v: dm.total ? `${dm.total}` : '0', tone: dm.total ? 'good' : 'warn', tip: `${MONTHS[curMonth() - 1]} deliverables planned` },
+    cards: { v: pos.length ? `${agreed}/${pos.length}` : '—', tone: rag(pos.length ? agreed / pos.length : null, .8, .3), tip: `Q${q} scorecards agreed (${cards.length} prepared)` },
+    actuals: { v: hasPlan ? (last ? MONTHS[last - 1] : 'none') : 'n/a', tone: !hasPlan ? 'none' : last >= curMonth() - 1 ? 'good' : last >= curMonth() - 2 ? 'warn' : 'bad', tip: 'Latest month with Finance actuals' },
+    pending: { v: String(pend), tone: pend ? 'warn' : 'good', tip: 'Approvals waiting' },
+    rescope: { v: openRescope(db, u.id) ? 'open' : '—', tone: openRescope(db, u.id) ? 'warn' : 'none' },
+  };
+}
+export function Monitor() {
+  const { db, setUnit } = useData(); const { t } = useTerms(); if (!db) return null;
+  const units = db.org_units.filter(u => u.kind === 'unit' && u.pilot).sort((a, b) => a.sort - b.sort);
+  const cols: [string, string][] = [['okr', `${t('objective')} plan`], ['annual', 'Annual plan'], ['struct', 'Structure'], ['targets', 'Targets set'], ['checkins', 'Check-ins fresh'], ['users', 'Signed in'], ['weekly', 'Weekly updates'], ['deliv', 'Deliverables'], ['cards', 'Scorecards'], ['actuals', 'Actuals to'], ['pending', 'Pending'], ['rescope', 'Rescope']];
+  const H = units.map(u => ({ u, h: unitHealth(db, u) }));
+  const claims = db.position_claims.filter(c => c.status === 'Pending').length; const users = db.positions.filter(p => p.user_id).length;
+  const recent = db.check_ins.filter(c => c.created_at > new Date(Date.now() - 7 * 864e5).toISOString()).length; const acts7 = db.activities.filter(a => (a.updated_at || a.created_at) > new Date(Date.now() - 7 * 864e5).toISOString()).length;
+  return <Page title="Process monitor" desc="Where each unit is in the planning cycle and how well the system is being used — the control room." help={<><p>Each row is a unit, each column a step of the cycle or a health signal. Green is healthy, amber needs attention, red is behind. Hover a cell for the detail; click a unit name to open it.</p>
+    <ul><li><b>Structure</b> — objectives that have key results or objectives below them.</li><li><b>Targets set</b> — key results with a target for the current quarter.</li><li><b>Check-ins fresh</b> — manual key results updated in the last 30 days.</li><li><b>Weekly updates</b> — signed-in people who logged activities last week.</li><li><b>Scorecards</b> — quarter scorecards agreed.</li><li><b>Actuals to</b> — the latest month Finance actuals cover.</li></ul></>}>
+    <div className="kpis"><div className="tile"><div className="tv">{users}</div><div className="tl">Linked sign-ins</div><div className="ts">of {db.positions.length} positions</div></div><div className={'tile ' + (claims ? 'warn' : '')}><div className="tv">{claims}</div><div className="tl">Sign-ins to confirm</div><div className="ts"><Link to="/studio/people">People & access →</Link></div></div>
+      <div className="tile"><div className="tv">{recent}</div><div className="tl">Check-ins, last 7 days</div></div><div className="tile"><div className="tv">{acts7}</div><div className="tl">Activities touched, 7 days</div></div><div className="tile"><div className="tv">{db.notifications.length}</div><div className="tl">My notifications</div></div></div>
+    <div className="tw"><table className="t monitor"><thead><tr><th>Unit</th>{cols.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead><tbody>
+      {H.map(({ u, h }) => <tr key={u.id}><td><Link to="/studio/okr" onClick={() => setUnit(u.id)}><b>{u.name}</b></Link><div className="mini">{u.revenue_model === 'project' ? 'Project business' : u.revenue_model === 'product' ? 'Product business' : 'Function'}</div></td>
+        {cols.map(([k]) => <td key={k} title={h[k].tip}><span className={'cell ' + h[k].tone}>{h[k].v}</span></td>)}</tr>)}
+    </tbody></table></div>
+    <h2 style={{ margin: '18px 0 8px' }}>Cycle steps</h2>
+    <div className="cycle-steps">{[['Strategy', 'Pillars, goals, identity', '/studio/strategy'], [`${t('objective')} plan`, 'Objectives, key results, cascade, weights', '/studio/okr'], ['Annual plan', 'Revenue, budget, cash; two-step approval', '/studio/revenue'], ['Resources', 'Funds and the waterline', '/studio/resources'], ['Quarter', 'Targets, deliverables, scorecards', '/studio/scorecards'], ['Month & week', 'Deliverables, activities, check-ins', '/insights/people-work'], ['Review & rescope', 'Results, rescope, versions', '/studio/rescope']].map(([a, b, l], i) => <Link key={a} to={l} className="cstep"><i>{i + 1}</i><b>{a}</b><small>{b}</small></Link>)}</div>
+  </Page>;
+}
+
+/* ---------- Strategy builder ---------- */
+function PillarModal({ init, unit, group, onClose }: { init: Row; unit: string; group: boolean; onClose: () => void }) {
+  const save = useSave(); const [f, setF] = useState<Row>(init); const tbl = group ? 'group_pillars' : 'unit_pillars';
+  return <Modal title={f.id ? 'Edit pillar' : 'New pillar'} onClose={onClose}><div className="g2"><label className="f">Code<input type="text" value={f.code || ''} onChange={e => setF({ ...f, code: e.target.value })} /></label><label className="f">Name<input type="text" value={f.name || ''} onChange={e => setF({ ...f, name: e.target.value })} /></label></div>
+    <label className="f">Description<textarea rows={3} value={f.description || ''} onChange={e => setF({ ...f, description: e.target.value })} /></label><label className="f">Strategic outcomes<textarea rows={2} value={f.outcomes || ''} onChange={e => setF({ ...f, outcomes: e.target.value })} /></label>
+    <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this pillar and its goals?') && await save(() => sb.from(tbl).delete().eq('id', f.id), [tbl, group ? 'group_goals' : 'unit_goals'], 'Deleted')) onClose(); }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button>
+      <button className="btn pri" disabled={!f.name?.trim()} onClick={async () => { const row: Row = { code: f.code || null, name: f.name.trim(), description: f.description || null, outcomes: f.outcomes || null, sort: f.sort ?? 99 }; if (!group) row.unit_id = unit;
+        if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
+}
+function GoalModal({ init, unit, group, onClose }: { init: Row; unit: string; group: boolean; onClose: () => void }) {
+  const { db } = useData(); const save = useSave(); const [f, setF] = useState<Row>(init); if (!db) return null; const tbl = group ? 'group_goals' : 'unit_goals';
+  const pillars = group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit);
+  return <Modal title={f.id ? 'Edit goal' : 'New goal'} onClose={onClose}>
+    <div className="g3"><label className="f">Pillar<select value={f.pillar_id || ''} onChange={e => setF({ ...f, pillar_id: e.target.value })}><option value="">Choose…</option>{pillars.map(p => <option key={p.id} value={p.id}>{p.code} {p.name}</option>)}</select></label><label className="f">Code<input type="text" value={f.code || ''} onChange={e => setF({ ...f, code: e.target.value })} /></label><label className="f">Weight<NumIn value={f.weight} onChange={v => setF({ ...f, weight: v })} /></label></div>
+    <label className="f">Goal<input type="text" value={f.name || ''} onChange={e => setF({ ...f, name: e.target.value })} /></label><label className="f">Description / target statement<textarea rows={2} value={f.description || ''} onChange={e => setF({ ...f, description: e.target.value })} /></label>
+    {!group && <div className="g2"><label className="f">Serves Group goal<select value={f.group_goal_id || ''} onChange={e => setF({ ...f, group_goal_id: e.target.value || null })}><option value="">—</option>{db.group_goals.map(g => <option key={g.id} value={g.id}>{g.code} {g.name}</option>)}</select></label><label className="row" style={{ marginTop: 22 }}><input type="checkbox" checked={!!f.link_confirmed} onChange={e => setF({ ...f, link_confirmed: e.target.checked })} /> Link confirmed with the unit</label></div>}
+    <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this goal? Objectives linked to it become unlinked.') && await save(() => sb.from(tbl).delete().eq('id', f.id), [tbl, 'objectives'], 'Deleted')) onClose(); }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button>
+      <button className="btn pri" disabled={!f.name?.trim() || !f.pillar_id} onClick={async () => { const row: Row = { pillar_id: f.pillar_id, code: f.code || null, name: f.name.trim(), description: f.description || null, weight: f.weight ?? null, sort: f.sort ?? 99 }; if (!group) Object.assign(row, { unit_id: unit, group_goal_id: f.group_goal_id || null, link_confirmed: !!f.link_confirmed });
+        if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
+}
+export function StrategyBuilder() {
+  const { db, unit, can } = useData(); const { t } = useTerms(); const [scope, setScope] = useState<'unit' | 'group'>('unit'); const [pm, setPm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null);
+  if (!db || !unit) return null; const group = scope === 'group';
+  const pillars = (group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit)).slice().sort((a, b) => a.sort - b.sort);
+  const goalsOf = (pid: string) => (group ? db.group_goals : db.unit_goals).filter(g => g.pillar_id === pid).sort((a, b) => a.sort - b.sort);
+  const st = db.strategy_statements.find(s => s.unit_id === (group ? db.org_units.find(o => o.kind === 'group')?.id : unit));
+  return <Page title="Strategy builder" desc={`Edit the strategic identity, ${t('pillar', true).toLowerCase()} and ${t('goal', true).toLowerCase()}, and link unit goals to Group goals.`}>
+    <Cmd right={<>{can('approve') && <Seg value={scope} options={[['unit', 'Unit strategy'], ['group', 'Group strategy']]} onChange={setScope} />}<button className="btn pri" onClick={() => setPm({})}>+ {t('pillar')}</button></>} />
+    <div className="card"><div className="row"><h3 style={{ flex: 1 }}>Identity</h3><Link to="/insights/strategy">View →</Link></div><div className="mini"><b>Vision:</b> {st?.vision || '—'}</div><div className="mini"><b>Mission:</b> {st?.mission || '—'}</div><div className="mini"><b>Values:</b> {(st?.values || []).map((v: Row) => v.name).join(', ') || '—'}</div><p className="note">Edit vision, mission and values from Insights → Strategy ("Edit identity").</p></div>
+    {pillars.map(p => <div key={p.id} className="card"><div className="row"><b style={{ flex: 1 }}>{p.code} · {p.name}</b><button className="btn sm" onClick={() => setGm({ pillar_id: p.id })}>+ {t('goal')}</button><button className="btn sm" onClick={() => setPm(p)}>Edit</button></div>
+      {p.description && <div className="mini">{p.description}</div>}
+      <div className="tw" style={{ marginTop: 8 }}><table className="t"><tbody>{goalsOf(p.id).map(g => <tr key={g.id} className="click" onClick={() => setGm(g)}><td style={{ width: 60 }}>{g.code}</td><td>{g.name}{g.description && <div className="mini">{g.description}</div>}</td>
+        {!group && <td>{byId(db.group_goals, g.group_goal_id) ? <span className="mini">↗ {byId(db.group_goals, g.group_goal_id)?.name}</span> : <Pill tone="warn">no Group link</Pill>}{!group && !g.link_confirmed && g.group_goal_id && <Pill tone="warn">to confirm</Pill>}</td>}
+        <td className="n">{db.objectives.filter(o => o.unit_goal_id === g.id).length} obj.</td></tr>)}</tbody></table></div></div>)}
+    {!pillars.length && <Empty>No {t('pillar', true).toLowerCase()} yet.</Empty>}
+    {pm && <PillarModal init={pm} unit={unit} group={group} onClose={() => setPm(null)} />}
+    {gm && <GoalModal init={gm} unit={unit} group={group} onClose={() => setGm(null)} />}
+  </Page>;
+}
+
+/* ---------- Scorecards (quarter agreements) ---------- */
+export function Scorecards() {
+  const { db, unit, user } = useData(); const save = useSave(); const [q, setQ] = useState(qOfMonth(curMonth())); const [ed, setEd] = useState<Row | null>(null); const [busy, setBusy] = useState(false);
+  if (!db || !unit) return null;
+  const pos = db.positions.filter(p => p.unit_id === unit && p.holder_name);
+  const rows = pos.map(p => ({ p, sc: db.scorecards.find(s => s.position_id === p.id && s.quarter === q) }));
+  const cnt = (s: string) => rows.filter(r => (r.sc?.status || 'None') === s).length;
+  async function proposeAll() { setBusy(true); let n = 0, skipped = 0; for (const r of rows.filter(r => !r.sc)) { const x = await proposeScorecard(db!, r.p, q, user.id); if (x.error) skipped++; else n++; } await save(() => Promise.resolve({ error: null }) as any, ['scorecards', 'scorecard_items'], `${n} scorecards sent${skipped ? `, ${skipped} skipped (nothing planned yet)` : ''}`); setBusy(false); }
+  return <Page title="Scorecards" desc="Quarter agreements: what each person is measured on, proposed by the manager and agreed by the person." help={<p>A scorecard lists the deliverables due in the quarter and the key results a person owns, with weights adding up to 100%. Once agreed, it becomes the personal part of the person's result. The person can ask to discuss; the manager adjusts and sends it again. Managers do this from their Inbox; this page shows the whole unit.</p>}>
+    <Cmd right={<><Seg value={q} options={[1, 2, 3, 4].map(n => [n, 'Q' + n] as [number, string])} onChange={setQ} /><button className="btn pri" disabled={busy} onClick={proposeAll}>Prepare all missing</button></>} />
+    <div className="kpis">{(['Agreed', 'Proposed', 'Discuss', 'Draft', 'None'] as const).map(s => <div key={s} className={'tile ' + (s === 'Agreed' ? 'good' : s === 'Discuss' ? 'warn' : '')}><div className="tv">{cnt(s)}</div><div className="tl">{s === 'None' ? 'Not prepared' : s}</div></div>)}</div>
+    <div className="tw"><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th>Status</th><th className="n">Items</th><th /></tr></thead><tbody>
+      {rows.map(({ p, sc }) => <tr key={p.id}><td><b>{p.holder_name}</b><div className="mini">{p.title}</div></td><td>{byId(db.org_units, p.org_unit_id)?.name}</td><td>{sc ? <Pill tone={sc.status === 'Agreed' ? 'good' : sc.status === 'Discuss' ? 'warn' : 'info'}>{sc.status}</Pill> : <span className="note">not prepared</span>}{sc?.person_note && <div className="mini">“{sc.person_note}”</div>}</td>
+        <td className="n">{sc ? db.scorecard_items.filter(i => i.scorecard_id === sc.id).length : ''}</td>
+        <td><div className="row" style={{ justifyContent: 'flex-end' }}>{sc && <button className="btn sm" onClick={() => setEd(sc)}>Edit</button>}<button className="btn sm" onClick={async () => { const x = await proposeScorecard(db, p, q, user.id); if (x.error) alert(x.error); else await save(() => Promise.resolve({ error: null }) as any, ['scorecards', 'scorecard_items'], 'Sent'); }}>{sc ? 'Rebuild & resend' : 'Prepare'}</button></div></td></tr>)}
+    </tbody></table></div>
+    {ed && <ScorecardEditor sc={ed} onClose={() => setEd(null)} />}
+  </Page>;
+}
+
+/* ---------- Framework, windows and rules ---------- */
+export function Framework() {
+  const { db } = useData(); const save = useSave(); if (!db) return null;
+  const f = db.settings.framework || { type: 'okr', labels: {} }; const w = db.settings.windows || {};
+  const put = (key: string, value: any) => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], 'Saved');
+  const base = (FRAMEWORKS[f.type] || FRAMEWORKS.okr).labels;
+  const roles = Object.keys(ROLE_NAME).filter(r => r !== 'none');
+  const toggle = (win: string, r: string) => { const cur: string[] = w[win] || []; put('windows', { ...w, [win]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
+  return <><Page title="Framework & rules" desc="Choose the planning framework and its words, who opens each window, and the scoring rules.">
+    <div className="card stack"><h2>Planning framework</h2>
+      <div className="g3">{Object.entries(FRAMEWORKS).map(([k, F]) => <button key={k} className={'kind' + (f.type === k ? ' on' : '')} onClick={() => put('framework', { type: k, labels: {} })}><b>{F.name}</b><small>{Object.values(F.labels).slice(0, 4).join(' → ')}</small></button>)}</div>
+      <p className="note">The structure and scoring stay the same; the framework sets the words everyone sees. You can rename any term below.</p>
+      <div className="g3">{Object.keys(base).map(k => <label key={k} className="f">{k.replace('_', ' ')}<input type="text" defaultValue={(f.labels || {})[k] || base[k]} onBlur={e => { const v = e.target.value.trim(); if (v && v !== ((f.labels || {})[k] || base[k])) put('framework', { ...f, labels: { ...(f.labels || {}), [k]: v } }); }} /></label>)}</div></div>
+    <div className="card"><h2>Who opens which window</h2><p className="note">Everyone has the Work window. Insights gives the full picture; Studio is the advanced, editable view; Studio admin adds framework, people, import and audit.</p>
+      <div className="tw"><table className="t"><thead><tr><th>Window</th>{roles.map(r => <th key={r}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{[['insights', 'Insights'], ['studio', 'Studio'], ['studio_admin', 'Studio admin']].map(([k, l]) => <tr key={k}><td><b>{l}</b></td>{roles.map(r => <td key={r}><input type="checkbox" checked={(w[k] || []).includes(r)} onChange={() => toggle(k, r)} disabled={k === 'studio_admin' && r === 'super_admin'} /></td>)}</tr>)}</tbody></table></div></div>
+  </Page><SettingsRules /></>;
+}
+
+/* ---------- Audit log ---------- */
+export function Audit() {
+  const { db } = useData(); const [rows, setRows] = useState<Row[]>([]); const [tbl, setTbl] = useState(''); const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { let q = sb.from('audit_log').select('*').order('at', { ascending: false }).limit(300); if (tbl) q = q.eq('table_name', tbl); q.then(({ data, error }) => { if (error) setErr(error.message); else setRows(data || []); }); }, [tbl]);
+  if (!db) return null;
+  const who = (u: string) => db.profiles.find(p => p.id === u)?.full_name || db.profiles.find(p => p.id === u)?.email || 'system';
+  const label = (r: Row) => { const d = r.new_data || r.old_data || {}; return d.text || d.title || d.name || d.holder_name || d.item || d.status || r.row_id; };
+  const diff = (r: Row) => { if (r.action !== 'UPDATE' || !r.old_data || !r.new_data) return ''; return Object.keys(r.new_data).filter(k => !['updated_at', 'created_at'].includes(k) && JSON.stringify(r.new_data[k]) !== JSON.stringify(r.old_data[k])).slice(0, 4).map(k => `${k}: ${String(JSON.stringify(r.old_data[k])).slice(0, 30)} → ${String(JSON.stringify(r.new_data[k])).slice(0, 30)}`).join(' · '); };
+  return <Page title="Audit log" desc="Every change to objectives, key results, plans, approvals, scorecards and positions — who, when, what.">
+    <Cmd right={<select value={tbl} onChange={e => setTbl(e.target.value)} aria-label="Table"><option value="">All tables</option>{['objectives', 'key_results', 'plan_lines', 'plan_status', 'rescopes', 'scorecards', 'positions', 'unit_goals', 'unit_pillars', 'deliverables'].map(t => <option key={t}>{t}</option>)}</select>} />
+    {err ? <div className="banner bad">{err}</div> : !rows.length ? <Empty>No changes recorded yet.</Empty> : <div className="tw"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Change</th></tr></thead><tbody>
+      {rows.map(r => <tr key={r.id}><td className="mini">{String(r.at).slice(0, 16).replace('T', ' ')}</td><td>{who(r.by_user)}</td><td><Pill tone={r.action === 'DELETE' ? 'bad' : r.action === 'INSERT' ? 'good' : 'none'}>{r.action.toLowerCase()}</Pill> <span className="mini">{r.table_name}</span></td><td>{String(label(r)).slice(0, 80)}</td><td className="mini">{diff(r)}</td></tr>)}
+    </tbody></table></div>}
+  </Page>;
+}

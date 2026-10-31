@@ -95,7 +95,7 @@ export function PerfPeople({ mine }: { mine?: boolean }) {
       <Cmd right={<PeriodPicker value={p} onChange={setP} />} />
       <div className="kpis"><div className="tile"><div className="tv">{pct(r.R)}</div><div className="tl">My result · {periodLabel(p)}</div><div className="ts">{bandOf(r.R, db)} · to HR {r.hr == null ? '—' : fmt(r.hr, 1) + '%'}</div></div>
         <div className="tile"><div className="tv">{pct(r.org)}</div><div className="tl">{o?.name} × {Math.round(r.s * 100)}%</div></div><div className="tile"><div className="tv">{pct(r.personal)}</div><div className="tl">My part × {Math.round((1 - r.s) * 100)}%</div><div className="ts">{r.basis}</div></div></div>
-      <button className="btn" onClick={() => setPick(me)}>See the details</button> <Link to="/work?tab=month">My deliverables →</Link>
+      <button className="btn" onClick={() => setPick(me)}>See the details</button> <Link to="/deliverables">My deliverables →</Link>
       {pick && <PersonDrawer pos={pick} p={p} onClose={() => setPick(null)} />}</Page>; }
   const ids = org ? subtreeIds(db, org) : null;
   const list: Row[] = db.positions.filter(x => x.unit_id === unit && x.holder_name && (!ids || ids.has(x.org_unit_id))).filter(x => !q || (x.holder_name || '').toLowerCase().includes(q.toLowerCase()) || x.title.toLowerCase().includes(q.toLowerCase()));
