@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useData, useSave, byId, ROLE_NAME, CAPS, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { Page, NumIn, Pill, Modal } from '../lib/ui';
+import { ClaimsPanel } from './Claim';
 
 export function SettingsRules() {
   const { db } = useData(); const save = useSave(); if (!db) return null;
@@ -31,7 +32,8 @@ export function SettingsPeople() {
   if (!db) return null;
   const list = db.positions.filter(p => (!u || p.unit_id === u) && (!q || [p.holder_name, p.title, p.email].some(x => (x || '').toLowerCase().includes(q.toLowerCase())))).sort((a, b) => (a.unit_id || '').localeCompare(b.unit_id || '') || a.sort - b.sort);
   const linked = db.positions.filter(p => p.user_id).length;
-  return <Page title="People & access" desc="Positions, who holds them, and which sign-in is linked to each." help={<><p>Access follows the <b>position</b>, not the person. To give someone access, put their work email on their position: when they sign in (or create an account) with that email, the position is linked automatically. Their role decides what they can see and do.</p><p>When someone moves, change the holder and email on the position; the plan, OKRs and history stay with the position.</p></>}>
+  return <Page title="People & access" desc="Positions, who holds them, and which sign-in is linked to each." help={<><p>Access follows the <b>position</b>, not the person. To give someone access, put their work email on their position: when they sign in (or create an account) with that email, the position is linked automatically. Their role decides what they can see and do.</p><p>People already in the weekly tracker are linked automatically by their email. Anyone else picks their own position the first time they sign in: team-member positions link straight away, leadership positions wait for your confirmation here. You get a notification either way and can undo it.</p><p>When someone moves, change the holder and email on the position; the plan, OKRs and history stay with the position.</p></>}>
+    <ClaimsPanel />
     <div className="cmdbar"><label className="scope"><span>Unit</span><select value={u} onChange={e => setU(e.target.value)}><option value="">All</option>{db.org_units.filter(x => x.kind === 'unit').map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
       <input type="text" placeholder="Find" value={q} onChange={e => setQ(e.target.value)} /><span className="sp" /><span className="note">{linked} of {db.positions.length} positions linked to a sign-in</span>
       <button className="btn pri" onClick={() => setEd({ unit_id: units[0]?.id, org_unit_id: units[0]?.id, role: 'employee', level: 'employee', status: 'Filled' })}>+ Position</button></div>

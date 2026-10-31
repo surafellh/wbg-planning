@@ -21,6 +21,8 @@ export default function Home() {
   const stale = myKrs.filter(k => !db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString()));
   if (stale.length) todos.push([`${stale.length} key result${stale.length > 1 ? 's' : ''} to check in`, 'No check-in in the last 30 days.', '/goals/map']);
   if (can('approve')) {
+    const cl = db.position_claims.filter(c => c.status === 'Pending').length;
+    if (cl) todos.push([`${cl} sign-in${cl > 1 ? 's' : ''} waiting to be linked to a position`, 'Confirm or reject in Settings → People & access.', '/settings/people']);
     const sub = db.plan_status.filter(s => s.status === 'Submitted' || (s.status === 'Endorsed' && can('finalApprove')));
     sub.forEach(s => todos.push([`${byId(db.org_units, s.unit_id)?.name}: ${s.plan_kind === 'okr' ? 'OKR plan' : 'annual plan'} to approve`, 'Approve or return with a note.', s.plan_kind === 'okr' ? '/plan/okr' : '/plan/revenue']));
     db.rescopes.filter(r => r.status === 'Submitted').forEach(r => todos.push([`${byId(db.org_units, r.unit_id)?.name}: rescope to decide`, r.trigger, '/plan/rescope']));

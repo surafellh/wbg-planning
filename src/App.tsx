@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { sb } from './lib/supabase';
 import { DataProvider, ROLE_NAME, useData } from './lib/data';
 import Login from './pages/Login';
+import { ClaimScreen } from './pages/Claim';
 import Home from './pages/Home';
 import { GoalsMap, GoalsQuarter, GroupView } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
@@ -48,7 +49,7 @@ function Shell() {
   if (error) return <div className="login"><div className="card"><h2>Could not load</h2><p className="note">{error}</p><button className="btn" onClick={() => location.reload()}>Try again</button></div></div>;
   const top = loc.pathname.split('/')[1] || 'home';
   const isAdmin = myPositions.some(p => p.role === 'super_admin' || p.role === 'group_strategy');
-  if (!me) return <div className="login"><div className="card stack"><h2>Account not linked yet</h2><p>You are signed in as <b>{user.email}</b>, but this email is not yet linked to a position. Ask Group Strategy (Settings → People & access) to add your email to your position, then sign in again.</p><button className="btn" onClick={() => sb.auth.signOut()}>Sign out</button></div></div>;
+  if (!me) return <ClaimScreen />;
   const guard = (cap: boolean, el: ReactNode) => cap ? el : <Navigate to="/home" replace />;
   const has = (k: string, s?: string) => { const n = nav.find(x => x.key === k); return !!n && (!s || n.subs.some(x => x[0] === s)); };
   return <div className="shell">

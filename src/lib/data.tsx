@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { sb, fetchAll } from './supabase';
 
 export const TABLES = ['org_units', 'positions', 'profiles', 'app_settings', 'group_pillars', 'group_goals', 'unit_pillars', 'unit_goals', 'objectives', 'key_results', 'kr_targets', 'kr_plan_links', 'check_ins',
-  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications'] as const;
+  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims'] as const;
 const ORDER: Record<string, string> = { app_settings: 'key', cash_values: 'item_id', funds: 'unit_id', need_priority: 'unit_id', plan_status: 'unit_id', kr_targets: 'kr_id', kpi_values: 'kpi_id', kr_plan_links: 'kr_id' };
 export type Row = Record<string, any>;
 export type DB = { [K in (typeof TABLES)[number]]: Row[] } & { settings: Record<string, any>; cache: Map<string, any> };
