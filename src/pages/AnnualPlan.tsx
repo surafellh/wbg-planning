@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Sheet, useDraft, type Col } from '../lib/sheet';
+import { SaveBar } from './work/Plan';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { MONTHS, lineVals, lineQty, linesOf, sum, money, fmt, actualBy, lastActualMonth, pct } from '../lib/calc';
@@ -20,39 +22,58 @@ const SECN: Record<string, string> = { rev: 'Revenue', cos: 'Cost of sales', ope
 function groupsOf(lines: Row[]) { const m = new Map<string, Row[]>(); lines.forEach(l => { const g = l.line_group || 'Other'; m.set(g, [...(m.get(g) || []), l]); }); return Array.from(m.entries()); }
 
 function PlanGrid({ unit, sec, view, editable }: { unit: string; sec: string; view: 'value' | 'qty' | 'pva'; editable: boolean }) {
-  const { db } = useData(); const save = useSave(); const [open, setOpen] = useState<Record<string, boolean>>({}); const [flt, setFlt] = useState(''); const [add, setAdd] = useState(false);
+  const { db } = useData(); const [open, setOpen] = useState<Record<string, boolean>>({}); const [flt, setFlt] = useState(''); const [add, setAdd] = useState(false); const [edit, setEdit] = useState(false);
   if (!db) return null;
-  const all = linesOf(db, unit, sec).sort((a, b) => a.sort - b.sort);
+  const all = linesOf(db, unit, sec).sort((a, b) => (a.line_group || '').localeCompare(b.line_group || '') || a.sort - b.sort);
   const lines = all.filter(l => !flt || (l.name + ' ' + (l.line_group || '') + ' ' + (l.code || '')).toLowerCase().includes(flt.toLowerCase()));
-  const tools = <div className="row" style={{ marginBottom: 8 }}><input type="text" placeholder="Filter lines" value={flt} onChange={e => setFlt(e.target.value)} /><button className="btn sm" onClick={() => { const g: Record<string, boolean> = {}; groupsOf(lines).forEach(([k]) => { g[k] = true; }); setOpen(Object.keys(open).length ? {} : g); }}>{Object.keys(open).length ? 'Collapse all' : 'Expand all'}</button><span className="sp" /><span className="note">{lines.length} of {all.length} lines</span>{editable && <button className="btn sm pri" onClick={() => setAdd(true)}>+ Line</button>}</div>;
+  const cost = sec !== 'rev';
+  const tools = <div className="row" style={{ marginBottom: 8 }}><input type="text" placeholder="Filter lines" value={flt} onChange={e => setFlt(e.target.value)} />
+    {!edit && <button className="btn sm" onClick={() => { const g: Record<string, boolean> = {}; groupsOf(lines).forEach(([k]) => { g[k] = true; }); setOpen(Object.keys(open).length ? {} : g); }}>{Object.keys(open).length ? 'Collapse all' : 'Expand all'}</button>}
+    <span className="sp" /><span className="note">{lines.length} of {all.length} lines</span>
+    {editable && !edit && <button className="btn sm pri" onClick={() => setEdit(true)}>Edit plan</button>}{editable && edit && <button className="btn sm" onClick={() => setAdd(true)}>+ Line</button>}</div>;
   if (!all.length) return <>{editable && <button className="btn pri" onClick={() => setAdd(true)}>+ Line</button>}<Empty>No {SECN[sec].toLowerCase()} lines in this unit's plan.</Empty>{add && <LineModal unit={unit} sec={sec} onClose={() => setAdd(false)} />}</>;
+  if (edit) return <>{tools}{add && <LineModal unit={unit} sec={sec} onClose={() => setAdd(false)} />}<PlanSheet lines={lines} qtyMode={view === 'qty'} onDone={() => setEdit(false)} /></>;
   const last = lastActualMonth(db, unit);
-  const setCell = (l: Row, m: number, v: number | null, kind: 'qty' | 'val') => {
-    const q = lineQty(l), val = lineVals(l);
-    if (kind === 'qty') { q[m] = v || 0; val[m] = (v || 0) * Number(l.price || 0); } else val[m] = v || 0;
-    return save(() => sb.from('plan_lines').update(kind === 'qty' ? { qty: q, val } : { val }).eq('id', l.id), ['plan_lines']);
-  };
-  const setPrice = (l: Row, p: number | null) => save(() => sb.from('plan_lines').update({ price: p, val: lineQty(l).map(q => q * (p || 0)) }).eq('id', l.id), ['plan_lines'], 'Price updated');
   const grand = Array.from({ length: 12 }, (_, i) => sum(lines.map(l => lineVals(l)[i])));
+  const used = (a: number | null, p: number) => a == null || !p ? null : a / p;
   return <>{tools}{add && <LineModal unit={unit} sec={sec} onClose={() => setAdd(false)} />}<div className="tw"><table className="t">
-    <thead><tr><th className="first">{view === 'pva' ? 'Group' : 'Line'}</th>{view === 'qty' && <th className="n">Price</th>}{MONTHS.map((m, i) => <th key={m} className="n">{m}{view === 'pva' && i < last ? ' ✓' : ''}</th>)}<th className="n">Year</th>{view === 'pva' && <><th className="n">YTD plan</th><th className="n">YTD actual</th><th>Achieved</th></>}</tr></thead>
+    <thead><tr><th className="first">{view === 'pva' ? 'Group / line' : 'Line'}</th>{view === 'qty' && <th className="n">Price</th>}{MONTHS.map((m, i) => <th key={m} className="n" data-tip={view === 'pva' && i < last ? 'Finance actuals are in for this month' : undefined}>{m}{view === 'pva' && i < last ? ' ✓' : ''}</th>)}<th className="n">Year</th>
+      {view === 'pva' && <><th className="n">To date plan</th><th className="n">To date actual</th><th data-tip={cost ? 'Used = actual ÷ budget to date. Over 100% means overspent.' : 'Achieved = actual ÷ plan to date.'}>{cost ? 'Used' : 'Achieved'}</th></>}</tr></thead>
     <tbody>
       {groupsOf(lines).map(([g, ls]) => {
         const gv = Array.from({ length: 12 }, (_, i) => sum(ls.map(l => lineVals(l)[i])));
-        const ytdP = sum(gv.slice(0, last)); const ytdA = actualBy(db, unit, sec, Array.from({ length: last }, (_, i) => i + 1), [g]);
+        const ytdP = sum(gv.slice(0, last)); const ytdA = actualBy(db, unit, sec, Array.from({ length: last }, (_, i) => i + 1), [g]); const r = used(ytdA, ytdP);
         const acts = Array.from({ length: 12 }, (_, i) => actualBy(db, unit, sec, [i + 1], [g]));
         return [<tr key={g} className="g click" onClick={() => setOpen({ ...open, [g]: !open[g] })}><td className="first">{open[g] ? '▾' : '▸'} {g} <span className="note">({ls.length})</span></td>{view === 'qty' && <td />}
-          {gv.map((v, i) => <td key={i} className="n">{view === 'pva' ? <>{money(v)}{acts[i] != null && <div className={'note' + ((acts[i] || 0) < v ? '' : '')}>{money(acts[i])}</div>}</> : view === 'qty' ? '' : money(v)}</td>)}
-          <td className="n">{money(sum(gv))}</td>{view === 'pva' && <><td className="n">{money(ytdP)}</td><td className="n">{money(ytdA)}</td><td><Bar p={ytdA == null || !ytdP ? null : (sec === 'rev' ? ytdA / ytdP : ytdP / Math.max(ytdA, 1))} /> <span className="note">{ytdA == null || !ytdP ? '' : pct(ytdA / ytdP)}</span></td></>}</tr>,
-          ...(open[g] && view !== 'pva' ? ls.map(l => { const v = view === 'qty' ? lineQty(l) : lineVals(l); const base = view === 'qty' ? lineQty(l, true) : lineVals(l, true);
+          {gv.map((v, i) => <td key={i} className="n">{view === 'qty' ? '' : money(v)}{view === 'pva' && acts[i] != null && <div className="mini" style={{ color: (cost ? (acts[i] || 0) > v : (acts[i] || 0) < v) ? 'var(--bad)' : 'var(--good)' }}>{money(acts[i])}</div>}</td>)}
+          <td className="n">{money(sum(gv))}</td>{view === 'pva' && <><td className="n">{money(ytdP)}</td><td className="n">{money(ytdA)}</td><td><Bar p={r == null ? null : cost ? Math.min(1, r) : r} tone={r == null ? undefined : cost ? (r > 1 ? 'bad' : 'good') : undefined} /> <span className="note">{pct(r)}</span></td></>}</tr>,
+          ...(open[g] ? ls.map(l => { const v = view === 'qty' ? lineQty(l) : lineVals(l); const base = view === 'qty' ? lineQty(l, true) : lineVals(l, true);
             return <tr key={l.id}><td className="first ind" title={l.code || ''}>{l.name}{l.uom && view === 'qty' ? <span className="note"> · {l.uom}</span> : ''}</td>
-              {view === 'qty' && <td className="n">{editable ? <NumIn value={l.price} onChange={p => setPrice(l, p)} w={100} /> : fmt(Number(l.price))}</td>}
-              {v.map((x, i) => <td key={i} className="n" title={base[i] !== x ? `Baseline ${fmt(base[i], 2)}` : ''} style={base[i] !== x ? { background: 'var(--info-soft)' } : undefined}>
-                {editable && (view === 'value' ? l.kind === 'value' : l.kind === 'qty') ? <NumIn value={Math.round(x * 100) / 100} onChange={nv => setCell(l, i, nv, view === 'qty' ? 'qty' : 'val')} w={view === 'qty' ? 64 : 96} /> : view === 'qty' ? fmt(x, 2) : money(x)}</td>)}
-              <td className="n">{view === 'qty' ? fmt(sum(v), 2) : money(sum(v))}</td></tr>; }) : [])];
+              {view === 'qty' && <td className="n">{fmt(Number(l.price))}</td>}
+              {v.map((x, i) => <td key={i} className="n" data-tip={base[i] !== x ? `Baseline ${fmt(base[i], 2)}` : undefined} style={base[i] !== x ? { background: 'var(--info-soft)' } : undefined}>{view === 'qty' ? fmt(x, 2) : money(x)}</td>)}
+              <td className="n">{view === 'qty' ? fmt(sum(v), 2) : money(sum(v))}</td>{view === 'pva' && <td colSpan={3} className="mini">actuals are recorded by group</td>}</tr>; }) : [])];
       })}
-      <tr className="b"><td className="first">Total {SECN[sec].toLowerCase()}</td>{view === 'qty' && <td />}{grand.map((v, i) => <td key={i} className="n">{view === 'qty' ? '' : money(v)}</td>)}<td className="n">{money(sum(grand))}</td>{view === 'pva' && (() => { const p = sum(grand.slice(0, last)); const a = actualBy(db, unit, sec, Array.from({ length: last }, (_, i) => i + 1)); return <><td className="n">{money(p)}</td><td className="n">{money(a)}</td><td>{a != null && p ? pct(a / p) : ''}</td></>; })()}</tr>
-    </tbody></table></div></>;
+      <tr className="b"><td className="first">Total {SECN[sec].toLowerCase()}</td>{view === 'qty' && <td />}{grand.map((v, i) => { const a = actualBy(db, unit, sec, [i + 1]); return <td key={i} className="n">{view === 'qty' ? '' : money(v)}{view === 'pva' && a != null && <div className="mini">{money(a)}</div>}</td>; })}<td className="n">{money(sum(grand))}</td>{view === 'pva' && (() => { const p = sum(grand.slice(0, last)); const a = actualBy(db, unit, sec, Array.from({ length: last }, (_, i) => i + 1)); return <><td className="n">{money(p)}</td><td className="n">{money(a)}</td><td>{pct(used(a, p))}</td></>; })()}</tr>
+    </tbody></table></div><p className="note">Shaded cells differ from the approved baseline (hover for the baseline). {view === 'pva' ? 'Small figures under the plan are Finance actuals.' : ''}</p></>;
+}
+
+/** Edit the plan like a spreadsheet: change months, quantities and prices, then Save. */
+function PlanSheet({ lines, qtyMode, onDone }: { lines: Row[]; qtyMode: boolean; onDone: () => void }) {
+  const save = useSave(); const [busy, setBusy] = useState(false);
+  const source = useMemo(() => lines.map(l => { const isQ = qtyMode && l.kind === 'qty'; const v = isQ ? lineQty(l) : lineVals(l); const r: Row = { id: l.id, grp: l.line_group, name: l.name, price: l.price, kind: l.kind, isQ }; v.forEach((x, i) => { r['m' + (i + 1)] = Math.round(x * 100) / 100; }); return r; }), [lines, qtyMode]);
+  const d = useDraft(source, [source]);
+  const cols: Col[] = [{ key: 'grp', label: 'Group', type: 'ro', width: 150 }, { key: 'name', label: 'Line', type: 'text', width: 220 }, ...(qtyMode ? [{ key: 'price', label: 'Price', type: 'number' as const, width: 100, editable: (r: Row) => r.kind === 'qty' }] : []),
+    ...MONTHS.map((m, i) => ({ key: 'm' + (i + 1), label: m, type: 'number' as const, width: qtyMode ? 70 : 100, editable: (r: Row) => qtyMode ? r.kind === 'qty' : r.kind === 'value' })), { key: 'yr', label: 'Year', type: 'ro', width: 110, fmt: (_: any, r: Row) => qtyMode ? fmt(sum(Array.from({ length: 12 }, (_, i) => r['m' + (i + 1)])), 2) : money(sum(Array.from({ length: 12 }, (_, i) => r['m' + (i + 1)]))) }];
+  async function doSave() {
+    setBusy(true); let err: string | null = null;
+    for (const r of d.all.filter(r => r._dirty)) { const arr = Array.from({ length: 12 }, (_, i) => Number(r['m' + (i + 1)]) || 0);
+      const patch: Row = { name: r.name }; if (r.isQ) { patch.qty = arr; patch.price = r.price; patch.val = arr.map(q => q * Number(r.price || 0)); } else if (!qtyMode || r.kind === 'value') patch.val = arr; if (qtyMode && r.kind === 'qty' && r.price !== source.find(x => x.id === r.id)?.price) patch.val = arr.map(q => q * Number(r.price || 0));
+      const x = await sb.from('plan_lines').update(patch).eq('id', r.id); err = err || x.error?.message || null; }
+    if (await save(() => Promise.resolve({ error: err }) as any, ['plan_lines'], 'Plan saved')) onDone(); setBusy(false);
+  }
+  return <><Sheet cols={cols} rows={d.rows} onChange={d.change} footer={<button className="btn sm" onClick={() => { d.reset(); onDone(); }}>Close editing</button>} />
+    <p className="note">{qtyMode ? 'Quantity lines: change quantities and the unit price; amounts follow. Amount-only lines are edited in the Amount view.' : 'Amount lines are edited here; quantity lines in the Quantity × price view.'}</p>
+    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></>;
 }
 
 function LineModal({ unit, sec, onClose }: { unit: string; sec: string; onClose: () => void }) {
@@ -73,7 +94,7 @@ function LineModal({ unit, sec, onClose }: { unit: string; sec: string; onClose:
 }
 
 /* ---------- Niyat-style project revenue: engagements billed by milestone ---------- */
-function ProjectModal({ unit, init, onClose }: { unit: string; init: Row; onClose: () => void }) {
+function ProjectModal({ unit, init, onClose, readOnly }: { unit: string; init: Row; onClose: () => void; readOnly?: boolean }) {
   const { db } = useData(); const save = useSave();
   const line = db?.plan_lines.find(l => l.project_id === init.id && l.section === 'rev');
   const [f, setF] = useState<Row>({ status: 'Planned', phase: 'Pipeline', ...init, bill: line ? lineVals(line) : Array(12).fill(0) });
@@ -101,37 +122,42 @@ function ProjectModal({ unit, init, onClose }: { unit: string; init: Row; onClos
     <div><h4>Billing milestones by month (ETB)</h4><div className="tw"><table className="t"><thead><tr>{MONTHS.map(m => <th key={m} className="n">{m}</th>)}<th className="n">Total</th></tr></thead><tbody><tr>
       {f.bill.map((v: number, i: number) => <td key={i} className="n"><NumIn value={v || null} w={84} onChange={nv => { const b = [...f.bill]; b[i] = nv || 0; set('bill', b); }} /></td>)}<td className="n">{money(sum(f.bill))}</td></tr></tbody></table></div>
       {f.contract_value && Math.abs(sum(f.bill) - f.contract_value) > 1 && <p className="note">Billing this year {money(sum(f.bill))} of contract {money(f.contract_value)} — the rest falls in other years.</p>}</div>
-    <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this project and its billing plan?')) { if (line) await sb.from('plan_lines').delete().eq('id', line.id); if (await save(() => sb.from('projects').delete().eq('id', f.id), ['projects', 'plan_lines'], 'Deleted')) onClose(); } }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.name?.trim()} onClick={go}>Save</button></div>
+    <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this project and its billing plan?')) { if (line) await sb.from('plan_lines').delete().eq('id', line.id); if (await save(() => sb.from('projects').delete().eq('id', f.id), ['projects', 'plan_lines'], 'Deleted')) onClose(); } }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.name?.trim() || readOnly} onClick={go}>Save</button></div>
   </Modal>;
 }
 
 function ProjectRevenue({ unit, editable }: { unit: string; editable: boolean }) {
-  const { db } = useData(); const [pm, setPm] = useState<Row | null>(null); if (!db) return null;
-  const projects = db.projects.filter(p => p.unit_id === unit).sort((a, b) => a.sort - b.sort);
+  const { db } = useData(); const [pm, setPm] = useState<Row | null>(null); const [kind, setKind] = useState<'all' | 'bill' | 'del'>('all'); const [q, setQ] = useState(''); if (!db) return null;
   const bill = (p: Row) => { const l = db.plan_lines.find(x => x.project_id === p.id && x.section === 'rev'); return l ? lineVals(l) : null; };
+  const all = db.projects.filter(p => p.unit_id === unit).sort((a, b) => a.sort - b.sort);
+  const isBill = (p: Row) => !!bill(p) || Number(p.contract_value) > 0;
+  const projects = all.filter(p => (kind === 'all' || (kind === 'bill' ? isBill(p) : !isBill(p))) && (!q || (p.name + ' ' + (p.client || '') + ' ' + (p.service_line || '')).toLowerCase().includes(q.toLowerCase())));
   const last = lastActualMonth(db, unit);
-  const svc = Array.from(new Set(projects.map(p => p.service_line || 'Other')));
-  const pipeline = sum(projects.filter(p => ['Pipeline', 'Proposal'].includes(p.phase)).map(p => Number(p.contract_value) || 0));
-  const contracted = sum(projects.filter(p => ['Contracted', 'Delivery', 'Closing'].includes(p.phase) && p.status !== 'Lost').map(p => Number(p.contract_value) || 0));
-  const planYear = sum(projects.map(p => sum(bill(p) || [])));
+  const pipeline = sum(all.filter(p => ['Pipeline', 'Proposal'].includes(p.phase)).map(p => Number(p.contract_value) || 0));
+  const contracted = sum(all.filter(p => ['Contracted', 'Delivery', 'Closing'].includes(p.phase) && p.status !== 'Lost').map(p => Number(p.contract_value) || 0));
+  const planned = sum(all.filter(p => p.phase === 'Planned').map(p => Number(p.contract_value) || 0));
+  const planYear = sum(all.map(p => sum(bill(p) || [])));
   const ytdA = actualBy(db, unit, 'rev', Array.from({ length: last }, (_, i) => i + 1));
+  const svcs = Array.from(new Set(linesOf(db, unit, 'rev').map(l => l.line_group || 'Other')));
   return <>
-    <div className="g4" style={{ marginBottom: 14 }}>
-      <div className="tile"><div className="tv">{money(planYear)}</div><div className="tl">Billing planned this year</div></div>
-      <div className="tile"><div className="tv">{money(contracted)}</div><div className="tl">Contract value — contracted & in delivery</div></div>
-      <div className="tile"><div className="tv">{money(pipeline)}</div><div className="tl">Pipeline & proposals</div></div>
-      <div className="tile"><div className="tv">{money(ytdA)}</div><div className="tl">Revenue actual to date</div><div className="ts">plan to date {money(sum(projects.map(p => sum((bill(p) || []).slice(0, last)))))}</div></div>
+    <div className="kpis">
+      <div className="tile" data-tip="Sum of the monthly billing milestones of all projects for this year."><div className="tv">{money(planYear)}</div><div className="tl">Billing planned this year</div></div>
+      <div className="tile" data-tip="Contract value of projects in the Contracted, Delivery or Closing phase. Set a project's phase and contract value by opening it."><div className="tv">{money(contracted)}</div><div className="tl">Contracted & in delivery</div></div>
+      <div className="tile" data-tip="Contract value of projects in the Pipeline or Proposal phase — opportunities not yet signed."><div className="tv">{money(pipeline)}</div><div className="tl">Pipeline & proposals</div></div>
+      <div className="tile" data-tip="Planned engagement streams from the annual plan workbook that are not yet signed projects."><div className="tv">{money(planned)}</div><div className="tl">Planned streams (workbook)</div></div>
+      <div className="tile"><div className="tv">{money(ytdA)}</div><div className="tl">Revenue actual to date</div><div className="ts">plan to date {money(sum(all.map(p => sum((bill(p) || []).slice(0, last)))))}</div></div>
     </div>
-    <div className="row" style={{ marginBottom: 8 }}><h2>Projects and engagements</h2><span className="sp" />{editable && <button className="btn pri" onClick={() => setPm({})}>+ Project</button>}</div>
-    {svc.map(s => <div key={s} style={{ marginBottom: 14 }}><h4 style={{ margin: '6px 0' }}>{s}</h4><div className="tw"><table className="t">
-      <thead><tr><th className="first">Project</th><th>Phase</th><th className="n">Contract</th>{MONTHS.map(m => <th key={m} className="n">{m}</th>)}<th className="n">This year</th></tr></thead>
-      <tbody>{projects.filter(p => (p.service_line || 'Other') === s).map(p => { const b = bill(p); return <tr key={p.id} className={editable ? 'click' : ''} onClick={() => editable && setPm(p)}>
-        <td className="first">{p.name}{p.client && <div className="note">{p.client}</div>}{p.note && <div className="note">{p.note}</div>}</td><td><Pill tone={p.phase === 'Delivery' || p.phase === 'Contracted' ? 'good' : 'none'}>{p.phase}</Pill></td>
+    <div className="row" style={{ marginBottom: 8 }}><h2 style={{ flex: 1 }}>Projects and engagements</h2><input type="text" placeholder="Search" value={q} onChange={e => setQ(e.target.value)} /><Seg value={kind} options={[['all', 'All'], ['bill', 'Billing (with value)'], ['del', 'Delivery register']]} onChange={setKind} />{editable && <button className="btn pri" onClick={() => setPm({})}>+ Project</button>}</div>
+    <p className="note" style={{ marginBottom: 8 }}>One list: <b>billing</b> projects carry a contract value and monthly billing milestones (they make the revenue plan); the <b>delivery register</b> lists projects being delivered that have no billing set yet. Open any project to set its phase, contract value and billing. Move a project from Pipeline → Proposal → Contracted → Delivery as it progresses; the cards follow.</p>
+    <div className="tw"><table className="t">
+      <thead><tr><th className="first">Project</th><th>Service line</th><th>Kind</th><th>Phase</th><th className="n">Contract</th>{MONTHS.map(m => <th key={m} className="n">{m}</th>)}<th className="n">This year</th></tr></thead>
+      <tbody>{projects.map(p => { const b = bill(p); return <tr key={p.id} className="click" onClick={() => setPm(p)}>
+        <td className="first">{p.name}{p.client && <div className="note">{p.client}</div>}</td><td className="mini">{p.service_line}</td><td>{isBill(p) ? <Pill tone="info">Billing</Pill> : <Pill>Delivery</Pill>}</td><td><Pill tone={p.phase === 'Delivery' || p.phase === 'Contracted' ? 'good' : 'none'}>{p.phase}</Pill></td>
         <td className="n">{money(Number(p.contract_value) || null)}</td>{(b || Array(12).fill(null)).map((v: number | null, i: number) => <td key={i} className="n">{v ? money(v) : ''}</td>)}<td className="n">{b ? money(sum(b)) : '—'}</td></tr>; })}
-        <tr className="b"><td className="first">Actual billed ({s})</td><td /><td />{MONTHS.map((_, i) => <td key={i} className="n">{money(actualBy(db, unit, 'rev', [i + 1], [s]))}</td>)}<td className="n">{money(actualBy(db, unit, 'rev', Array.from({ length: 12 }, (_, i) => i + 1), [s]))}</td></tr>
-      </tbody></table></div></div>)}
-    {!projects.length && <Empty>No projects yet. Add the engagements this unit will bill this year.</Empty>}
-    {pm && <ProjectModal unit={unit} init={pm} onClose={() => setPm(null)} />}
+        {svcs.map(sv => <tr key={sv} className="g"><td className="first">Actual billed · {sv}</td><td colSpan={4} className="mini">Finance actual by service line</td>{MONTHS.map((_, i) => <td key={i} className="n">{money(actualBy(db, unit, 'rev', [i + 1], [sv]))}</td>)}<td className="n">{money(actualBy(db, unit, 'rev', Array.from({ length: 12 }, (_, i) => i + 1), [sv]))}</td></tr>)}
+      </tbody></table></div>
+    {!all.length && <Empty>No projects yet. Add the engagements this unit will bill this year.</Empty>}
+    {pm && <ProjectModal unit={unit} init={pm} onClose={() => setPm(null)} readOnly={!editable} />}
   </>;
 }
 

@@ -72,8 +72,21 @@ export function lastActualMonth(db: DB, unit?: string) { let m = 0; db.actuals.f
 export function currentQ(_db?: DB) { return qOfMonth(curMonth()); }
 export function lastCheckIn(db: DB, krId: string) { let best: any = null; for (const c of db.check_ins) if (c.kr_id === krId && (!best || c.created_at > best.created_at)) best = c; return best; }
 export function unitOfObjective(db: DB, oid: string) { return db.objectives.find(o => o.id === oid)?.unit_id; }
-export function krsOf(db: DB, oid: string) { return db.key_results.filter(k => k.objective_id === oid && !k.retired_at).sort((a, b) => (a.sort || 0) - (b.sort || 0)); }
-export function childObjectives(db: DB, oid: string) { return db.objectives.filter(o => o.parent_objective_id === oid); }
+/** Active key results of an objective (paused and dropped ones are kept but not scored). */
+export function krsOf(db: DB, oid: string, all = false) { return db.key_results.filter(k => k.objective_id === oid && !k.retired_at && (all || (k.state || 'active') === 'active')).sort((a, b) => (a.sort || 0) - (b.sort || 0)); }
+export const liveObj = (o: Row) => o.status !== 'Archived' && (o.state || 'active') === 'active';
+export function childObjectives(db: DB, oid: string) { return db.objectives.filter(o => o.parent_objective_id === oid && liveObj(o)); }
+/** Organisation key results of a unit (unit, department and division objectives — not archived personal ones). */
+export function orgKrs(db: DB, unit: string) { return db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && liveObj(o)).flatMap(o => krsOf(db, o.id)); }
+/** The chain from an objective up to the pillar: [objective, parent…, goal, pillar]. */
+export function chainUp(db: DB, o: Row): { kind: string; label: string; id: string; score?: number | null }[] {
+  const out: { kind: string; label: string; id: string }[] = []; let cur: Row | undefined = o; let n = 0;
+  while (cur && n < 10) { out.push({ kind: 'objective', label: cur.text, id: cur.id }); const kr: Row | null | undefined = cur.parent_kr_id ? db.key_results.find(k => k.id === cur!.parent_kr_id) : null;
+    const par: Row | undefined = db.objectives.find(x => x.id === cur!.parent_objective_id) || (kr ? db.objectives.find(x => x.id === kr.objective_id) : undefined);
+    if (!par) { const g = db.unit_goals.find(x => x.id === cur!.unit_goal_id); if (g) { out.push({ kind: 'goal', label: g.name, id: g.id }); const pil = db.unit_pillars.find(x => x.id === g.pillar_id); if (pil) out.push({ kind: 'pillar', label: pil.name, id: pil.id }); const gg = db.group_goals.find(x => x.id === g.group_goal_id); if (gg) out.push({ kind: 'group', label: gg.name, id: gg.id }); } }
+    cur = par; n++; }
+  return out;
+}
 const aggOf = (k: Row) => k.aggregation || (k.kr_type === 'cumulative' ? 'sum' : 'latest');
 const dirOf = (k: Row) => k.direction || (k.lower_is_better ? 'decrease' : 'increase');
 
@@ -163,9 +176,11 @@ export function weighted(items: [number, number | null][]) { const ok = items.fi
 /** Objective score = Σ w·min(progress,1) / Σ w for the period; an objective with no key results takes its children's weighted score. */
 export function objScore(db: DB, o: Row, p: Period = currentPeriod('Q'), depth = 0): number | null {
   const ck = `o${o.id}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
-  let v: number | null; const ks = krsOf(db, o.id);
-  if (ks.length) v = weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress]));
-  else { const kids = childObjectives(db, o.id); v = kids.length && depth < 8 ? weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)])) : null; }
+  let v: number | null; const ks = krsOf(db, o.id); const kids = depth < 8 ? childObjectives(db, o.id).filter(c => c.level !== 'individual') : [];
+  const own = ks.length ? weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress])) : null;
+  const below = kids.length ? weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)])) : null;
+  // An objective with both its own key results and objectives below blends them by its "own share" (default 50%).
+  if (own != null && below != null) { const w = o.own_weight != null ? Number(o.own_weight) / 100 : 0.5; v = w * own + (1 - w) * below; } else v = own ?? below;
   db.cache.set(ck, v); return v;
 }
 export function objState(db: DB, o: Row, p: Period = currentPeriod('Q')) { const ks = krsOf(db, o.id); const toDate = ks.length > 0 && ks.every(k => k.measure !== 'manual'); return statusFor(db, objScore(db, o, p), null, elapsed(p), toDate); }
@@ -173,14 +188,14 @@ export function objState(db: DB, o: Row, p: Period = currentPeriod('Q')) { const
 export function orgScore(db: DB, orgId: string | null | undefined, p: Period = currentPeriod('Q'), depth = 0): number | null {
   if (!orgId || depth > 6) return null;
   const ck = `g${orgId}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
-  const vals = db.objectives.filter(o => o.org_unit_id === orgId && o.level !== 'individual').map(o => objScore(db, o, p)).filter(v => v != null) as number[];
+  const vals = db.objectives.filter(o => o.org_unit_id === orgId && o.level !== 'individual' && liveObj(o)).map(o => objScore(db, o, p)).filter(v => v != null) as number[];
   let v: number | null = vals.length ? sum(vals) / vals.length : null;
   if (v == null) { const org = db.org_units.find(u => u.id === orgId); v = org ? orgScore(db, org.parent_id, p, depth + 1) : null; }
   db.cache.set(ck, v); return v;
 }
 /** Score from the org unit's own objectives only (null when it has none with data). */
-export const isOrgObj = (o: Row) => o.level !== 'individual';
-export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return avg(db.objectives.filter(o => o.org_unit_id === orgId && isOrgObj(o)).map(o => objScore(db, o, p))); }
+export const isOrgObj = (o: Row) => o.level !== 'individual' && o.status !== 'Archived';
+export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return avg(db.objectives.filter(o => o.org_unit_id === orgId && isOrgObj(o) && liveObj(o)).map(o => objScore(db, o, p))); }
 /** Whole-subtree score (unit with all its departments and divisions) — used for rankings. */
 export function subtreeIds(db: DB, id: string) { const ids = new Set<string>([id]); let grew = true; while (grew) { grew = false; db.org_units.forEach(u => { if (u.parent_id && ids.has(u.parent_id) && !ids.has(u.id)) { ids.add(u.id); grew = true; } }); } return ids; }
 export function orgShare(db: DB, level: string) { const w = db.settings.org_weights || { unit: 70, department: 60, division: 50, employee: 30 }; return Number(w[level === 'group' ? 'unit' : level] ?? 30) / 100; }
@@ -229,22 +244,36 @@ export function workStats(db: DB, posIds: Set<string>, wk: string) {
 }
 
 // ---------------- statements ----------------
-export type Stmt = { label: string; plan: number; act: number | null; base: number; bold?: boolean; indent?: boolean };
-export function incomeStatement(db: DB, units: string[], months: number[]): Stmt[] {
+export type Stmt = { key?: string; label: string; plan: number; act: number | null; base: number; bold?: boolean; indent?: boolean; cost?: boolean };
+const isDA = (g: string) => /depreciation|amorti/i.test(g); const isFin = (g: string) => /financ|interest|bank charge/i.test(g);
+/** Income statement from the annual plan, down to net income. Tax is applied at the configured rate on positive profit before tax. */
+export function incomeStatement(db: DB, units: string[], months: number[], detail = true): Stmt[] {
   const P = (sec: string, g?: string[]) => sum(units.map(u => planBy(db, u, sec, months, g)));
   const B = (sec: string, g?: string[]) => sum(units.map(u => planBy(db, u, sec, months, g, true)));
   const A = (sec: string, g?: string[]) => { const v = units.map(u => actualBy(db, u, sec, months, g)); return v.every(x => x == null) ? null : sum(v); };
   const groups = (sec: string) => Array.from(new Set(units.flatMap(u => linesOf(db, u, sec).map(l => l.line_group || 'Other'))));
+  const add = (a: number | null, b: number | null, sign = 1) => a == null && b == null ? null : (a || 0) + sign * (b || 0);
+  const row = (label: string, sec: string, g?: string[], extra: Partial<Stmt> = {}): Stmt => ({ label, plan: P(sec, g), act: A(sec, g), base: B(sec, g), ...extra });
   const rows: Stmt[] = [];
-  groups('rev').forEach(g => rows.push({ label: g, plan: P('rev', [g]), act: A('rev', [g]), base: B('rev', [g]), indent: true }));
-  const rev = { label: 'Revenue', plan: P('rev'), act: A('rev'), base: B('rev'), bold: true }; rows.push(rev);
-  const cos = { label: 'Cost of sales', plan: P('cos'), act: A('cos'), base: B('cos') }; rows.push(cos);
-  const gp = { label: 'Gross profit', plan: rev.plan - cos.plan, act: rev.act == null && cos.act == null ? null : (rev.act || 0) - (cos.act || 0), base: rev.base - cos.base, bold: true }; rows.push(gp);
-  groups('opex').forEach(g => rows.push({ label: g, plan: P('opex', [g]), act: A('opex', [g]), base: B('opex', [g]), indent: true }));
-  const opex = { label: 'Operating expenses', plan: P('opex'), act: A('opex'), base: B('opex') }; rows.push(opex);
-  rows.push({ label: 'Operating profit', plan: gp.plan - opex.plan, act: gp.act == null && opex.act == null ? null : (gp.act || 0) - (opex.act || 0), base: gp.base - opex.base, bold: true });
+  if (detail) groups('rev').forEach(g => rows.push(row(g, 'rev', [g], { indent: true })));
+  const rev = row('Revenue', 'rev', undefined, { bold: true, key: 'rev' }); rows.push(rev);
+  if (detail) groups('cos').forEach(g => rows.push(row(g, 'cos', [g], { indent: true, cost: true })));
+  const cos = row('Cost of sales', 'cos', undefined, { key: 'cos', cost: true }); rows.push(cos);
+  const gp: Stmt = { key: 'gp', label: 'Gross profit', plan: rev.plan - cos.plan, act: add(rev.act, cos.act, -1), base: rev.base - cos.base, bold: true }; rows.push(gp);
+  const og = groups('opex'); const opG = og.filter(g => !isDA(g) && !isFin(g)); const daG = og.filter(isDA); const finG = og.filter(isFin);
+  if (detail) opG.forEach(g => rows.push(row(g, 'opex', [g], { indent: true, cost: true })));
+  const opex = opG.length ? row('Operating expenses', 'opex', opG, { key: 'opex', cost: true }) : { key: 'opex', label: 'Operating expenses', plan: 0, act: null, base: 0, cost: true }; rows.push(opex);
+  const ebitda: Stmt = { key: 'ebitda', label: 'EBITDA', plan: gp.plan - opex.plan, act: add(gp.act, opex.act, -1), base: gp.base - opex.base, bold: true }; rows.push(ebitda);
+  const da = daG.length ? row('Depreciation & amortisation', 'opex', daG, { key: 'da', cost: true }) : { key: 'da', label: 'Depreciation & amortisation', plan: 0, act: null, base: 0, cost: true }; rows.push(da);
+  const ebit: Stmt = { key: 'ebit', label: 'Operating profit (EBIT)', plan: ebitda.plan - da.plan, act: add(ebitda.act, da.act, -1), base: ebitda.base - da.base, bold: true }; rows.push(ebit);
+  const fin = finG.length ? row('Interest & financial charges', 'opex', finG, { key: 'fin', cost: true }) : { key: 'fin', label: 'Interest & financial charges', plan: 0, act: null, base: 0, cost: true }; rows.push(fin);
+  const pbt: Stmt = { key: 'pbt', label: 'Profit before tax', plan: ebit.plan - fin.plan, act: add(ebit.act, fin.act, -1), base: ebit.base - fin.base, bold: true }; rows.push(pbt);
+  const rate = Number(db.settings.tax_rate?.rate ?? 30) / 100; const tx = (v: number | null) => v == null ? null : Math.max(0, v) * rate;
+  const tax: Stmt = { key: 'tax', label: `Profit tax (${Math.round(rate * 100)}%)`, plan: tx(pbt.plan)!, act: tx(pbt.act), base: tx(pbt.base)!, cost: true }; rows.push(tax);
+  rows.push({ key: 'ni', label: 'Net income', plan: pbt.plan - tax.plan, act: pbt.act == null ? null : pbt.act - (tax.act || 0), base: pbt.base - tax.base, bold: true });
   return rows;
 }
+export const IS_KEY = (rows: Stmt[], k: string) => rows.find(r => r.key === k)!;
 export function cashFlow(db: DB, units: string[]) {
   const items = db.cash_items.filter(c => units.includes(c.unit_id));
   const val = (id: string, m: number, k: 'plan' | 'actual') => { const v = db.cash_values.find(x => x.item_id === id && x.month === m); return v && v[k] != null ? Number(v[k]) : null; };
@@ -257,6 +286,13 @@ export function cashFlow(db: DB, units: string[]) {
     months.forEach(m => { if (k === 'actual' && inn[m - 1] == null && out[m - 1] == null) { close.push(null); return; } bal += (inn[m - 1] || 0) - (out[m - 1] || 0); close.push(bal); });
     res[k] = { inn, out, close };
   });
+  // actual cash from bank positions (weekly tracker) when the unit has them
+  const ca = db.cash_actual.filter(c => units.includes(c.unit_id));
+  if (ca.length) {
+    const byM = (m: number, f: string) => { const v = ca.filter(c => c.month === m).map(c => Number(c[f])); return v.length ? sum(v) : null; };
+    res.actual = { inn: months.map(m => byM(m, 'inflow')), out: months.map(m => byM(m, 'outflow')), close: months.map(m => byM(m, 'closing')) };
+    res.opening.actual = byM(1, 'opening') ?? res.opening.actual; res.actualSource = 'Bank positions from the weekly tracker';
+  }
   return res;
 }
 

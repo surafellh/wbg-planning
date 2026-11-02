@@ -47,15 +47,27 @@ export function NumIn({ value, onChange, w = 90, disabled }: { value: number | n
   return <input className="num" style={{ width: w }} inputMode="decimal" value={t} disabled={disabled} onChange={e => setT(e.target.value)} onBlur={() => { const v = t.trim() === '' ? null : Number(t.replace(/,/g, '')); if (v == null || !isNaN(v)) onChange(v); else setT(value == null ? '' : String(value)); }} />;
 }
 
-/** Page frame: title, one-line description, and a "How this works" panel. */
-export function Page({ title, desc, help, children }: { title: string; desc?: string; help?: ReactNode; children: ReactNode }) {
+/** Floating, non-blocking help panel. */
+export function HelpFloat({ title = 'How this works', children, onClose }: { title?: string; children: ReactNode; onClose: () => void }) {
+  const [min, setMin] = useState(false);
+  return <div className={'helpfloat' + (min ? ' min' : '')} role="complementary" aria-label={title}><div className="hh"><b>{title}</b><button className="btn sm" onClick={() => setMin(!min)}>{min ? 'Open' : 'Minimise'}</button><button className="x" onClick={onClose} aria-label="Close">×</button></div><div className="hb helpb">{children}</div></div>;
+}
+/** Page frame: title, one-line description, and a floating "How this works" panel. */
+export function Page({ title, desc, help, children, actions }: { title: string; desc?: string; help?: ReactNode; children: ReactNode; actions?: ReactNode }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { document.title = title + ' · WBG Planning'; }, [title]);
   return <>
-    <header className="hdr"><div><h1>{title}</h1>{desc && <p>{desc}{help && <> <button className="linkbtn" onClick={() => setOpen(true)}>How this works</button></>}</p>}</div></header>
+    <header className="hdr"><div style={{ flex: 1 }}><h1>{title}</h1>{(desc || help) && <p>{desc}{help && <> <button className="linkbtn" onClick={() => setOpen(true)}>How this works</button></>}</p>}</div>{actions}</header>
     <main>{children}</main>
-    {open && <Drawer title="How this works" onClose={() => setOpen(false)}><div className="helpb">{help}</div></Drawer>}
+    {open && <HelpFloat onClose={() => setOpen(false)}>{help}</HelpFloat>}
   </>;
+}
+/** Department / division filter inside the selected unit. */
+export function OrgFilter({ value, onChange, label = 'Whole unit' }: { value: string; onChange: (v: string) => void; label?: string }) {
+  const { db, unit } = useData(); if (!db || !unit) return null;
+  const walk = (id: string, d: number, out: { id: string; name: string }[]) => { db.org_units.filter(o => o.parent_id === id).sort((a, b) => a.sort - b.sort).forEach(o => { out.push({ id: o.id, name: '\u00a0\u00a0'.repeat(d) + o.name }); walk(o.id, d + 1, out); }); return out; };
+  const list = walk(unit, 0, []);
+  return <select value={value} onChange={e => onChange(e.target.value)} aria-label="Department or division"><option value="">{label}</option>{list.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select>;
 }
 
 /* ---------------- periods ---------------- */

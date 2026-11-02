@@ -2,8 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { sb, fetchAll } from './supabase';
 
 export const TABLES = ['org_units', 'positions', 'profiles', 'app_settings', 'group_pillars', 'group_goals', 'unit_pillars', 'unit_goals', 'objectives', 'key_results', 'kr_targets', 'kr_plan_links', 'check_ins',
-  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims', 'kr_month_targets', 'strategy_statements', 'week_reviews'] as const;
-const ORDER: Record<string, string> = { app_settings: 'key', cash_values: 'item_id', funds: 'unit_id', need_priority: 'unit_id', plan_status: 'unit_id', kr_targets: 'kr_id', kpi_values: 'kpi_id', kr_plan_links: 'kr_id', kr_month_targets: 'kr_id', strategy_statements: 'unit_id' };
+  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims', 'kr_month_targets', 'strategy_statements', 'week_reviews', 'messages', 'pmo_projects', 'cash_actual', 'cash_weekly', 'fund_months', 'need_schedule'] as const;
+const ORDER: Record<string, string> = { app_settings: 'key', cash_values: 'item_id', funds: 'unit_id', need_priority: 'unit_id', plan_status: 'unit_id', kr_targets: 'kr_id', kpi_values: 'kpi_id', kr_plan_links: 'kr_id', kr_month_targets: 'kr_id', strategy_statements: 'unit_id', cash_actual: 'unit_id', cash_weekly: 'unit_id', fund_months: 'unit_id' };
 export type Row = Record<string, any>;
 export type DB = { [K in (typeof TABLES)[number]]: Row[] } & { settings: Record<string, any>; cache: Map<string, any> };
 
@@ -104,11 +104,25 @@ export function useTerms() {
   const t = (k: string, plural = false) => { const w = L[k] || k; return plural ? (w.endsWith('y') ? w.slice(0, -1) + 'ies' : w.endsWith('s') ? w : w + 's') : w; };
   return { t, type: f.type as string };
 }
+/** Which Studio pages each role opens by default (overridable in Studio → Framework & rules). */
+export const STUDIO_ITEMS: Record<string, string[]> = {
+  monitor: ['super_admin', 'group_strategy', 'planning_head', 'unit_head'], strategy: ['super_admin', 'group_strategy', 'planning_head'],
+  okr: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'dept_head', 'div_head'], targets: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'dept_head', 'div_head'],
+  revenue: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'finance'], budget: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'finance', 'dept_head'],
+  resources: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'finance'], rescope: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'finance'],
+  calendar: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'finance', 'dept_head', 'div_head'], scorecards: ['super_admin', 'group_strategy', 'planning_head', 'unit_head', 'dept_head'],
+  projects: ['super_admin', 'group_strategy'],
+};
+export const STUDIO_LABELS: Record<string, string> = { monitor: 'Process monitor', strategy: 'Strategy builder', okr: 'Objective planner', targets: 'Targets & progress', revenue: 'Revenue plan', budget: 'Budget', resources: 'Resources', rescope: 'Rescope & versions', calendar: 'Planning calendar', scorecards: 'Scorecards', projects: 'Project portfolio' };
 /** Which windows a role can open (configurable in Studio → Framework & rules). */
 export function useWindows() {
-  const { db, role } = useData(); const w = db?.settings.windows || {};
+  const { db, role, me } = useData(); const w = db?.settings.windows || {};
   const has = (k: string, def: string[]) => ((w[k] as string[]) || def).includes(role);
-  return { insights: has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']), studio: has('studio', ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head']), studioAdmin: has('studio_admin', ['super_admin', 'group_strategy']) };
+  const items = { ...STUDIO_ITEMS, ...(db?.settings.studio_items || {}) } as Record<string, string[]>;
+  const pmo = db?.org_units.find(o => o.id === me?.org_unit_id)?.code === 'pmo';
+  const item = (k: string) => (items[k] || []).includes(role) || (k === 'projects' && pmo);
+  const studioAdmin = has('studio_admin', ['super_admin', 'group_strategy']);
+  return { insights: has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']), studio: has('studio', ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head', 'dept_head', 'div_head']), studioAdmin, item: (k: string) => studioAdmin || item(k) };
 }
 /** Send a notification to positions' linked users (no-op for vacant or unlinked positions). */
 export async function notifyPositions(db: DB, posIds: (string | null | undefined)[], kind: string, title: string, link?: string, body?: string) {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData, byId, type DB, type Row } from '../lib/data';
-import { incomeStatement, cashFlow, MONTHS, money, pct, lastActualMonth, sum, periodMonths, periodLabel, orgScore, objScore, krsOf, krState, subtreeIds, workStats, delivScore, weekStart, ymd, weekLabel, personResult, bandOf, planBy, actualBy, linesOf, avg, curMonth, type Period } from '../lib/calc';
+import { incomeStatement, cashFlow, MONTHS, money, pct, lastActualMonth, sum, periodMonths, periodLabel, orgScore, objScore, krsOf, krState, subtreeIds, workStats, delivScore, weekStart, ymd, weekLabel, personResult, bandOf, planBy, actualBy, linesOf, avg, curMonth, IS_KEY, lineVals, type Period } from '../lib/calc';
 import { Page, Seg, UnitPicker, Empty, PeriodPicker, usePeriod, BarChart, LineChart, StatusStack, Bar, StatePill, Ring } from '../lib/ui';
 import { statusCounts, unitKrs, unitGoalsTree, goalScore, pillarScore } from './Goals';
 
@@ -54,7 +54,25 @@ function OrgReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
     <div className="tw"><table className="t"><thead><tr><th>Organisation</th><th>{periodLabel(p)}</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th className="n">People</th><th>Avg. result</th><th>Deliverables</th></tr></thead><tbody>
       {rows.map(r => <tr key={r.o.id}><td><b>{r.o.name}</b><div className="mini">{r.o.kind} · {byId(db.org_units, r.o.unit_id)?.name}</div></td><td><Bar p={r.s} /> {pct(r.s)}</td>{r.q.map((v, i) => <td key={i}>{pct(v)}</td>)}<td className="n">{r.people}</td><td>{pct(r.avgR)}</td><td>{r.d.due ? `${r.d.accepted}/${r.d.due}` : '—'}</td></tr>)}
     </tbody></table></div>
+    <PeopleTable db={db} us={us} p={p} />
   </>;
+}
+
+/** Everyone in scope with their result: organisation part, personal part, band and HR score. */
+function PeopleTable({ db, us, p }: { db: DB; us: string[]; p: Period }) {
+  const [q, setQ] = useState(''); const [band, setBand] = useState(''); const [org, setOrg] = useState('');
+  const all = us.flatMap(u => db.positions.filter(x => x.unit_id === u && x.holder_name)).map(x => { const r = personResult(db, x, p); return { x, r, band: bandOf(r.R, db), d: delivScore(db, new Set([x.id]), p), wk: workStats(db, new Set([x.id]), ymd(weekStart(new Date()))) }; });
+  const orgs = Array.from(new Set(all.map(a => a.x.org_unit_id))).map(id => byId(db.org_units, id)).filter(Boolean).sort((a, b) => a!.name.localeCompare(b!.name));
+  const rows = all.filter(a => (!q || (a.x.holder_name + ' ' + a.x.title).toLowerCase().includes(q.toLowerCase())) && (!band || a.band === band) && (!org || a.x.org_unit_id === org)).sort((a, b) => (b.r.R ?? -1) - (a.r.R ?? -1));
+  const hrMax = Number(db.settings.hr_scale?.max ?? 70);
+  return <><div className="row" style={{ margin: '16px 0 6px', gap: 6, flexWrap: 'wrap' }}><h2 style={{ flex: 1 }}>People · {rows.length}</h2>
+    <input placeholder="Search name or position" value={q} onChange={e => setQ(e.target.value)} style={{ width: 200 }} />
+    <select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">All departments</option>{orgs.map(o => <option key={o!.id} value={o!.id}>{o!.name}</option>)}</select>
+    <select value={band} onChange={e => setBand(e.target.value)} aria-label="Band"><option value="">All bands</option>{['Achieved', 'Well performed', 'Partially achieved', 'Under performed'].map(b => <option key={b}>{b}</option>)}</select>
+    <Export name="people" rows={() => [['Name', 'Position', 'Organisation', 'Org share', 'Org score', 'Personal', 'Result', 'Band', `HR score (/${hrMax})`, 'Basis', 'Deliverables accepted'], ...rows.map(a => [a.x.holder_name, a.x.title, byId(db.org_units, a.x.org_unit_id)?.name, pct(a.r.s), pct(a.r.org), pct(a.r.personal), pct(a.r.R), a.band, a.r.hr == null ? '' : a.r.hr.toFixed(1), a.r.basis, `${a.d.accepted}/${a.d.due}`])]} /></div>
+    <div className="tw" style={{ maxHeight: 520 }}><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th data-tip="Score of the person's organisation (department or division), weighted by the organisation share for their level.">Org part</th><th data-tip="From the agreed quarter scorecard; if none, accepted deliverables; if none, own objectives or key results.">Personal part</th><th data-tip="Result = share × organisation score + (1 − share) × personal score.">Result</th><th>Band</th><th className="n" data-tip={`Result converted to the HR scale (out of ${hrMax}).`}>HR</th><th data-tip="Deliverables accepted of those due in the period.">Deliverables</th><th data-tip="Activities done this week.">This week</th></tr></thead><tbody>
+      {rows.map(a => <tr key={a.x.id}><td><b>{a.x.holder_name}</b><div className="mini">{a.x.title}</div></td><td className="mini">{byId(db.org_units, a.x.org_unit_id)?.name}</td><td>{pct(a.r.org)} <span className="mini">×{pct(a.r.s)}</span></td><td>{pct(a.r.personal)}<div className="mini">{a.r.basis}</div></td><td><Bar p={a.r.R} /> {pct(a.r.R)}</td><td className="mini">{a.band || '—'}</td><td className="n">{a.r.hr == null ? '—' : a.r.hr.toFixed(1)}</td><td>{a.d.due ? `${a.d.accepted}/${a.d.due}` : '—'}</td><td className="mini">{a.wk.total ? `${a.wk.done}/${a.wk.total}` : '—'}</td></tr>)}
+    </tbody></table></div></>;
 }
 
 function WorkReport({ db, us }: { db: DB; us: string[] }) {
@@ -71,48 +89,136 @@ function WorkReport({ db, us }: { db: DB; us: string[] }) {
     <div className="tw"><table className="t"><thead><tr><th>Week</th><th className="n">People</th><th className="n">Activities</th><th className="n">Done</th><th className="n">Stuck</th><th>Completion</th><th className="n">Summaries</th></tr></thead><tbody>
       {weeks.map((w, i) => <tr key={i}><td>{weekLabel(w)}</td><td className="n">{ws[i].people}</td><td className="n">{ws[i].total}</td><td className="n">{ws[i].done}</td><td className="n">{ws[i].stuck}</td><td><Bar p={ws[i].completion} /> {pct(ws[i].completion)}</td><td className="n">{reviews[i]}</td></tr>)}
     </tbody></table></div>
+    <WorkByOrg db={db} us={us} weeks={weeks} />
     <h2 style={{ margin: '14px 0 6px' }}>Open blockers · {stuck.length}</h2>
-    {stuck.length ? <div className="tw"><table className="t"><tbody>{stuck.map(a => <tr key={a.id}><td>{a.title}</td><td>{a.blocker}</td><td>{byId(db.positions, a.owner_position_id)?.holder_name}</td><td>{weekLabel(new Date(a.week_start + 'T00:00:00Z'))}</td></tr>)}</tbody></table></div> : <p className="note">None.</p>}
+    {stuck.length ? <div className="tw"><table className="t"><thead><tr><th>Activity</th><th>Blocker</th><th>Help needed from</th><th>Owner</th><th>Week</th></tr></thead><tbody>{stuck.map(a => <tr key={a.id}><td>{a.title}</td><td>{a.blocker}</td><td className="mini">{byId(db.org_units, a.help_from_unit)?.name || '—'}</td><td>{byId(db.positions, a.owner_position_id)?.holder_name}</td><td>{weekLabel(new Date(a.week_start + 'T00:00:00Z'))}</td></tr>)}</tbody></table></div> : <p className="note">None.</p>}
   </>;
 }
 
+/** Weekly and monthly work by department: completion this and last week, people updating on time, deliverables for the month. */
+function WorkByOrg({ db, us, weeks }: { db: DB; us: string[]; weeks: Date[] }) {
+  const [m, setM] = useState(curMonth()); const [open, setOpen] = useState<string | null>(null);
+  const orgs = us.flatMap(u => Array.from(subtreeIds(db, u))).map(id => byId(db.org_units, id)!).filter(o => o && o.kind !== 'group' && db.positions.some(x => x.org_unit_id === o.id && x.holder_name));
+  const thisW = ymd(weeks[weeks.length - 1]), prevW = ymd(weeks[weeks.length - 2]);
+  const rows = orgs.map(o => { const pos = new Set(db.positions.filter(x => x.org_unit_id === o.id && x.holder_name).map(x => x.id)); const a = workStats(db, pos, thisW), b = workStats(db, pos, prevW);
+    const dels = db.deliverables.filter(d => pos.has(d.owner_position_id) && d.month === m && !['removed', 'transferred'].includes(d.status)); return { o, pos, a, b, dels }; }).filter(r => r.a.total || r.b.total || r.dels.length);
+  return <><div className="row" style={{ margin: '14px 0 6px' }}><h2 style={{ flex: 1 }}>By department</h2><select value={m} onChange={e => setM(Number(e.target.value))} aria-label="Month">{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x} deliverables</option>)}</select>
+    <Export name="work-by-department" rows={() => [['Organisation', 'People', 'This week completion', 'Last week completion', 'Updated on time', 'Stuck', 'Deliverables', 'Accepted', 'Done awaiting acceptance'], ...rows.map(r => [r.o.name, r.pos.size, pct(r.a.completion), pct(r.b.completion), `${r.a.onTime}/${r.a.people}`, r.a.stuck, r.dels.length, r.dels.filter(d => d.status === 'accepted').length, r.dels.filter(d => d.status === 'done').length])]} /></div>
+    <div className="tw"><table className="t"><thead><tr><th>Organisation</th><th className="n">People</th><th>This week</th><th data-tip="Completion last week, for the week-on-week trend.">Last week</th><th data-tip="People whose plan was updated before the Saturday 2 PM cut-off.">On time</th><th className="n">Stuck</th><th data-tip="Deliverables planned for the chosen month: accepted / done awaiting acceptance / total.">Deliverables · {MONTHS[m - 1]}</th></tr></thead><tbody>
+      {rows.map(r => [<tr key={r.o.id} className="click" onClick={() => setOpen(open === r.o.id ? null : r.o.id)}><td><b>{open === r.o.id ? '▾' : '▸'} {r.o.name}</b><div className="mini">{r.o.kind}</div></td><td className="n">{r.pos.size}</td><td><Bar p={r.a.completion} /> {pct(r.a.completion)}</td><td className="mini">{pct(r.b.completion)}</td><td className="mini">{r.a.people ? `${r.a.onTime}/${r.a.people}` : '—'}</td><td className={'n' + (r.a.stuck ? ' neg' : '')}>{r.a.stuck}</td><td>{r.dels.length ? `${r.dels.filter(d => d.status === 'accepted').length} / ${r.dels.filter(d => d.status === 'done').length} / ${r.dels.length}` : '—'}</td></tr>,
+        ...(open === r.o.id ? r.dels.map(d => <tr key={d.id}><td className="ind mini" colSpan={3}>{d.title}<div className="mini">{byId(db.key_results, d.key_result_id)?.title || ''}</div></td><td className="mini" colSpan={2}>{byId(db.positions, d.owner_position_id)?.holder_name}</td><td className="mini" colSpan={2}>{d.status}{d.evidence ? ' · ' + d.evidence : ''}</td></tr>) : [])])}
+    </tbody></table></div></>;
+}
+
+type Basis = 'ytd' | 'q1' | 'q2' | 'q3' | 'q4' | 'year' | 'month';
+const TIP: Record<string, string> = { base: 'The original approved annual plan.', plan: 'Plan in force: the baseline plus approved rescopes.', act: 'Actuals recorded by Finance (Work → Record → Financial actuals).', var: 'Actual − plan. Red when it hurts profit (revenue below plan or cost above plan).', ach: 'Actual ÷ plan.' };
 function Financial({ db, us, name }: { db: DB; us: string[]; name: string }) {
-  const [tab, setTab] = useState<'is' | 'cf' | 'trend' | 'lines'>('is'); const [per, setPer] = useState<'ytd' | 'q1' | 'q2' | 'q3' | 'q4' | 'year'>('ytd');
-  const last = Math.max(1, ...us.map(u => lastActualMonth(db, u)));
-  const months = per === 'ytd' ? Array.from({ length: last }, (_, i) => i + 1) : per === 'year' ? Array.from({ length: 12 }, (_, i) => i + 1) : periodMonths({ t: 'Q', n: Number(per[1]) });
+  const [tab, setTab] = useState<'is' | 'mis' | 'co' | 'cos' | 'cf' | 'wcf' | 'trend' | 'lines'>('is'); const [per, setPer] = useState<Basis>('ytd');
+  const [cmp, setCmp] = useState<'plan' | 'mom' | 'qoq' | 'ytd'>('plan'); const [detail, setDetail] = useState(true); const [misKind, setMisKind] = useState<'act' | 'plan'>('act');
+  const last = Math.max(1, ...us.map(u => lastActualMonth(db, u))); const [mon, setMon] = useState(last);
+  const rng = (a: number, b: number) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
+  const months = per === 'ytd' ? rng(1, last) : per === 'year' ? rng(1, 12) : per === 'month' ? [mon] : periodMonths({ t: 'Q', n: Number(per[1]) });
+  const unitName = (u: string) => byId(db.org_units, u)?.name || '';
+  const vtone = (r: Row, v: number | null) => v != null && (r.cost ? v > 0 : v < 0) ? ' neg' : '';
+  const dpct = (a: number | null, b: number | null) => a == null || b == null || !b ? '' : ((a - b) / Math.abs(b) * 100).toFixed(1) + '%';
+  const tabs: [typeof tab, string][] = [['is', 'Income statement'], ['mis', 'Monthly income statement'], ['co', 'By company'], ['cos', 'Cost of sales'], ['cf', 'Cash flow'], ['wcf', 'Weekly cash'], ['trend', 'Trends'], ['lines', 'By product / budget line']];
   return <>
-    <div className="row" style={{ marginBottom: 10 }}><Seg value={tab} options={[['is', 'Income statement'], ['cf', 'Cash flow'], ['trend', 'Monthly trend'], ['lines', 'By product / budget line']]} onChange={setTab} /><span className="sp" />
-      {(tab === 'is' || tab === 'lines') && <Seg value={per} options={[['ytd', `To date (${MONTHS[last - 1]})`], ['q1', 'Q1'], ['q2', 'Q2'], ['q3', 'Q3'], ['q4', 'Q4'], ['year', 'Year']]} onChange={setPer} />}</div>
-    {tab === 'is' && (() => { const rows = incomeStatement(db, us, months); const rev = rows.find(r => r.label === 'Revenue')!; const op = rows[rows.length - 1]; const gp = rows.find(r => r.label === 'Gross profit')!;
-      if (!rows.some(r => r.plan)) return <Empty>No plan lines for {name}.</Empty>;
-      return <>
-        <div className="kpis"><div className="tile"><div className="tv">{money(rev.plan)}</div><div className="tl">Revenue — plan</div><div className="ts">actual {money(rev.act)}</div></div>
-          <div className="tile"><div className="tv">{rev.plan ? pct(gp.plan / rev.plan) : '—'}</div><div className="tl">Gross margin — plan</div><div className="ts">actual {rev.act ? pct((gp.act || 0) / rev.act) : '—'}</div></div>
-          <div className={'tile ' + (op.plan < 0 ? 'bad' : 'good')}><div className="tv">{money(op.plan)}</div><div className="tl">Operating profit — plan</div></div>
-          <div className={'tile ' + (op.act != null && op.act < 0 ? 'bad' : '')}><div className="tv">{money(op.act)}</div><div className="tl">Operating profit — actual</div></div></div>
-        <div className="row" style={{ marginBottom: 6 }}><span className="sp" /><Export name="income-statement" rows={() => [['Line', 'Baseline', 'Plan in force', 'Actual'], ...rows.map(r => [r.label, r.base, r.plan, r.act])]} /></div>
-        <div className="tw"><table className="t"><thead><tr><th>{name}</th><th className="n">Baseline</th><th className="n">Plan in force</th><th className="n">Actual</th><th className="n">Variance</th><th className="n">Achieved</th></tr></thead><tbody>
-          {rows.map((r, i) => { const cost = /cost|expense/i.test(r.label) || (r.indent && i > rows.findIndex(x => x.label === 'Gross profit')); const v = r.act == null ? null : r.act - r.plan;
-            return <tr key={r.label + i} className={r.bold ? 'b' : ''}><td className={r.indent ? 'ind' : ''}>{r.label}</td><td className="n">{money(r.base)}</td><td className="n">{money(r.plan)}</td><td className="n">{money(r.act)}</td><td className={'n' + (v != null && (cost ? v > 0 : v < 0) ? ' neg' : '')}>{money(v)}</td><td className="n">{r.act != null && r.plan ? pct(r.act / r.plan) : ''}</td></tr>; })}
-        </tbody></table></div><p className="note">Depreciation, interest and tax are not in the unit annual plan workbooks, so this stops at operating profit.</p></>; })()}
-    {tab === 'cf' && (() => { const cf = cashFlow(db, us); if (!cf.items.length) return <Empty>No cash flow plan for {name}.</Empty>; const neg = cf.plan.close.findIndex((v: number | null) => v != null && v < 0);
-      return <><div className={'banner ' + (neg >= 0 ? 'bad' : 'good')}>{neg >= 0 ? `Planned closing cash goes below zero in ${MONTHS[neg]}: the plan is not cash positive from there.` : 'Planned closing cash stays positive all year.'}</div>
+    <div className="row" style={{ marginBottom: 10, flexWrap: 'wrap', gap: 6 }}><select value={tab} onChange={e => setTab(e.target.value as any)} aria-label="Financial report">{tabs.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+      {tab === 'is' && <Seg value={cmp} options={[['plan', 'Plan vs actual'], ['mom', 'MoM'], ['qoq', 'QoQ'], ['ytd', 'YTD']]} onChange={setCmp} />}<span className="sp" />
+      {((tab === 'is' && cmp === 'plan') || tab === 'lines' || tab === 'co' || tab === 'cos') && <Seg value={per} options={[['ytd', `YTD (${MONTHS[last - 1]})`], ['month', 'Month'], ['q1', 'Q1'], ['q2', 'Q2'], ['q3', 'Q3'], ['q4', 'Q4'], ['year', 'Year']]} onChange={setPer} />}
+      {(per === 'month' || (tab === 'is' && cmp === 'mom')) && <select value={mon} onChange={e => setMon(Number(e.target.value))} aria-label="Month">{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>}
+      {(tab === 'is' || tab === 'mis') && <label className="mini row" style={{ gap: 4 }}><input type="checkbox" checked={detail} onChange={e => setDetail(e.target.checked)} />Line detail</label>}</div>
+
+    {tab === 'is' && (() => {
+      if (cmp === 'plan') { const rows = incomeStatement(db, us, months, detail); const K = (k: string) => IS_KEY(rows, k); const rev = K('rev'), gp = K('gp'), ebit = K('ebit'), ni = K('ni');
+        if (!rows.some(r => r.plan)) return <Empty>No plan lines for {name}.</Empty>;
+        return <>
+          <div className="kpis"><div className="tile"><div className="tv">{money(rev.act)}</div><div className="tl">Revenue</div><div className="ts">plan {money(rev.plan)} · {rev.plan ? pct((rev.act || 0) / rev.plan) : '—'}</div></div>
+            <div className="tile"><div className="tv">{rev.act ? pct((gp.act || 0) / rev.act) : '—'}</div><div className="tl">Gross margin</div><div className="ts">plan {rev.plan ? pct(gp.plan / rev.plan) : '—'}</div></div>
+            <div className={'tile ' + (ebit.act != null && ebit.act < 0 ? 'bad' : '')}><div className="tv">{money(ebit.act)}</div><div className="tl">Operating profit (EBIT)</div><div className="ts">plan {money(ebit.plan)}</div></div>
+            <div className={'tile ' + (ni.act != null && ni.act < 0 ? 'bad' : 'good')}><div className="tv">{money(ni.act)}</div><div className="tl">Net income</div><div className="ts">plan {money(ni.plan)}</div></div></div>
+          <div className="row" style={{ marginBottom: 6 }}><span className="sp" /><Export name="income-statement" rows={() => [['Line', 'Baseline', 'Plan in force', 'Actual', 'Variance'], ...rows.map(r => [r.label, r.base, r.plan, r.act, r.act == null ? null : r.act - r.plan])]} /></div>
+          <div className="tw"><table className="t"><thead><tr><th>{name}</th><th className="n" data-tip={TIP.base}>Baseline</th><th className="n" data-tip={TIP.plan}>Plan in force</th><th className="n" data-tip={TIP.act}>Actual</th><th className="n" data-tip={TIP.var}>Variance</th><th className="n" data-tip={TIP.ach}>Achieved</th></tr></thead><tbody>
+            {rows.map((r, i) => { const v = r.act == null ? null : r.act - r.plan;
+              return <tr key={r.label + i} className={r.bold ? 'b' : ''}><td className={r.indent ? 'ind' : ''}>{r.label}</td><td className="n">{money(r.base)}</td><td className="n">{money(r.plan)}</td><td className="n">{money(r.act)}</td><td className={'n' + vtone(r, v)}>{money(v)}</td><td className="n">{r.act != null && r.plan ? pct(r.act / r.plan) : ''}</td></tr>; })}
+          </tbody></table></div></>; }
+      // period-on-period analysis on actuals
+      const qOf = (m: number) => Math.ceil(m / 3); const cq = qOf(last);
+      const [aM, bM, aL, bL] = cmp === 'mom' ? [[mon], mon > 1 ? [mon - 1] : [], MONTHS[mon - 1], mon > 1 ? MONTHS[mon - 2] : '—']
+        : cmp === 'qoq' ? [rng(cq * 3 - 2, last), cq > 1 ? periodMonths({ t: 'Q', n: cq - 1 }) : [], `Q${cq}${last % 3 ? ' to date' : ''}`, cq > 1 ? `Q${cq - 1}` : '—']
+        : [rng(1, last), rng(1, last), `Actual YTD`, `Plan YTD`];
+      const A = incomeStatement(db, us, aM as number[], detail), B = (bM as number[]).length ? incomeStatement(db, us, bM as number[], detail) : null, FY = incomeStatement(db, us, rng(1, 12), detail);
+      return <><p className="note" style={{ marginTop: 0 }}>{cmp === 'mom' ? 'Month on month: actuals of the chosen month against the month before.' : cmp === 'qoq' ? 'Quarter on quarter: actuals of the current quarter (to date) against the previous quarter.' : 'Year to date: actuals against plan for the same months, and against the full-year plan.'}</p>
+        <div className="tw"><table className="t"><thead><tr><th>{name}</th><th className="n">{aL}</th><th className="n">{bL}</th><th className="n">Change</th><th className="n">Change %</th>{cmp === 'ytd' && <><th className="n">Full-year plan</th><th className="n">% of year</th></>}</tr></thead><tbody>
+          {A.map((r, i) => { const a = r.act; const b = cmp === 'ytd' ? r.plan : B ? B[i].act : null; const d = a == null || b == null ? null : a - b; const f = FY[i].plan;
+            return <tr key={r.label + i} className={r.bold ? 'b' : ''}><td className={r.indent ? 'ind' : ''}>{r.label}</td><td className="n">{money(a)}</td><td className="n">{money(b)}</td><td className={'n' + vtone(r, d)}>{money(d)}</td><td className="n">{dpct(a, b)}</td>{cmp === 'ytd' && <><td className="n">{money(f)}</td><td className="n">{a != null && f ? pct(a / f) : ''}</td></>}</tr>; })}
+        </tbody></table></div></>; })()}
+
+    {tab === 'mis' && (() => { const per12 = rng(1, 12).map(m => incomeStatement(db, us, [m], detail)); const base = per12[0]; const yr = incomeStatement(db, us, rng(1, 12), detail);
+      const cell = (m: number, i: number) => { const r = per12[m - 1][i]; return misKind === 'plan' ? r.plan : m <= last ? r.act : r.plan; };
+      return <><div className="row" style={{ marginBottom: 6 }}><Seg value={misKind} options={[['act', `Actuals to ${MONTHS[last - 1]}, plan after`], ['plan', 'Plan only']]} onChange={setMisKind} /><span className="sp" />
+        <Export name="monthly-income-statement" rows={() => [['Line', ...MONTHS, 'Year'], ...base.map((r, i) => [r.label, ...rng(1, 12).map(m => cell(m, i)), sum(rng(1, 12).map(m => cell(m, i) || 0))])]} /></div>
+        <div className="tw"><table className="t"><thead><tr><th className="first">{name}</th>{MONTHS.map((m, i) => <th key={m} className="n" style={misKind === 'act' && i + 1 > last ? { fontStyle: 'italic', opacity: .7 } : undefined}>{m}{misKind === 'act' && i + 1 > last ? ' (plan)' : ''}</th>)}<th className="n">Year</th><th className="n">Year plan</th></tr></thead><tbody>
+          {base.map((r, i) => <tr key={r.label + i} className={r.bold ? 'b' : ''}><td className={'first' + (r.indent ? ' ind' : '')}>{r.label}</td>{rng(1, 12).map(m => { const v = cell(m, i); return <td key={m} className={'n' + (v != null && v < 0 ? ' neg' : '')} style={misKind === 'act' && m > last ? { fontStyle: 'italic', opacity: .7 } : undefined}>{money(v)}</td>; })}<td className="n">{money(sum(rng(1, 12).map(m => cell(m, i) || 0)))}</td><td className="n">{money(yr[i].plan)}</td></tr>)}
+        </tbody></table></div><p className="note">Italic months are still plan; they switch to actuals as Finance records them.</p></>; })()}
+
+    {tab === 'co' && (() => { const cols = us.map(u => ({ u, r: incomeStatement(db, [u], months, false) })); const g = incomeStatement(db, us, months, false);
+      return <><div className="row" style={{ marginBottom: 6 }}><span className="mini">Actual · plan underneath · {per === 'month' ? MONTHS[mon - 1] : per.toUpperCase()}</span><span className="sp" /><Export name="by-company" rows={() => [['Line', ...us.map(u => unitName(u) + ' actual'), ...us.map(u => unitName(u) + ' plan'), 'Group actual', 'Group plan'], ...g.map((r, i) => [r.label, ...cols.map(c => c.r[i].act), ...cols.map(c => c.r[i].plan), r.act, r.plan])]} /></div>
+        <div className="tw"><table className="t"><thead><tr><th>Line</th>{cols.map(c => <th key={c.u} className="n">{unitName(c.u)}</th>)}{us.length > 1 && <th className="n">Group</th>}</tr></thead><tbody>
+          {g.map((r, i) => <tr key={r.label} className={r.bold ? 'b' : ''}><td>{r.label}</td>{[...cols.map(c => c.r[i]), ...(us.length > 1 ? [r] : [])].map((x, j) => <td key={j} className={'n' + (x.act != null && x.act < 0 ? ' neg' : '')}>{money(x.act)}<div className="mini">{money(x.plan)}</div></td>)}</tr>)}
+          <tr><td className="mini">Gross margin</td>{[...cols.map(c => c.r), ...(us.length > 1 ? [g] : [])].map((x, j) => { const rv = IS_KEY(x, 'rev'), gp = IS_KEY(x, 'gp'); return <td key={j} className="n mini">{rv.act ? pct((gp.act || 0) / rv.act) : '—'}</td>; })}</tr>
+          <tr><td className="mini">Net margin</td>{[...cols.map(c => c.r), ...(us.length > 1 ? [g] : [])].map((x, j) => { const rv = IS_KEY(x, 'rev'), ni = IS_KEY(x, 'ni'); return <td key={j} className="n mini">{rv.act ? pct((ni.act || 0) / rv.act) : '—'}</td>; })}</tr>
+        </tbody></table></div></>; })()}
+
+    {tab === 'cos' && <CosBreakdown db={db} us={us} months={months} name={name} />}
+
+    {tab === 'cf' && (() => { const cf = cashFlow(db, us); if (!cf.items.length && !cf.actualSource) return <Empty>No cash flow plan for {name}.</Empty>; const neg = cf.plan.close.findIndex((v: number | null) => v != null && v < 0);
+      return <>{cf.items.length > 0 && <div className={'banner ' + (neg >= 0 ? 'bad' : 'good')}>{neg >= 0 ? `Planned closing cash goes below zero in ${MONTHS[neg]}: the plan is not cash positive from there.` : 'Planned closing cash stays positive all year.'}</div>}
         <LineChart labels={MONTHS} series={[{ name: 'Closing cash — plan', values: cf.plan.close, color: 'var(--accent)' }, { name: 'Closing cash — actual', values: cf.actual.close, color: 'var(--good)' }]} fmtY={v => money(v)} />
+        {cf.actualSource && <p className="note">Actual cash: {cf.actualSource}.</p>}
         <div className="tw" style={{ marginTop: 10 }}><table className="t"><thead><tr><th className="first">{name}</th>{MONTHS.map(m => <th key={m} className="n">{m}</th>)}<th className="n">Year</th></tr></thead><tbody>
           <tr className="g"><td className="first">Opening cash</td><td className="n">{money(cf.opening.plan)}</td><td colSpan={12} className="note">actual opening {money(cf.opening.actual)}</td></tr>
-          {(['in', 'out'] as const).map(dir => [<tr key={dir} className="g"><td className="first" colSpan={14}>{dir === 'in' ? 'Cash in' : 'Cash out'}</td></tr>,
+          {(['in', 'out'] as const).map(dir => [<tr key={dir} className="g"><td className="first" colSpan={14}>{dir === 'in' ? 'Cash in (plan)' : 'Cash out (plan)'}</td></tr>,
             ...cf.items.filter((i: Row) => i.direction === dir).map((i: Row) => { const pl = MONTHS.map((_, m) => cf.val(i.id, m + 1, 'plan')); return <tr key={i.id}><td className="first ind">{i.item}</td>{pl.map((v, m) => <td key={m} className="n">{money(v)}</td>)}<td className="n">{money(sum(pl))}</td></tr>; })])}
+          {(['inn', 'out'] as const).map(k => <tr key={k}><td className="first">{k === 'inn' ? 'Cash in — actual' : 'Cash out — actual'}</td>{cf.actual[k].map((v: number | null, m: number) => <td key={m} className="n">{money(v)}</td>)}<td className="n">{money(sum(cf.actual[k].map((v: number | null) => v || 0)))}</td></tr>)}
           {(['plan', 'actual'] as const).map(k => <tr key={k} className="b"><td className="first">Closing cash — {k}</td>{cf[k].close.map((v: number | null, m: number) => <td key={m} className={'n' + (v != null && v < 0 ? ' neg' : '')}>{money(v)}</td>)}<td /></tr>)}
         </tbody></table></div></>; })()}
-    {tab === 'trend' && (() => { const S = (sec: string, a: boolean) => MONTHS.map((_, i) => { if (a) { const v = us.map(u => actualBy(db, u, sec, [i + 1])); return v.every(x => x == null) ? null : sum(v); } return sum(us.map(u => planBy(db, u, sec, [i + 1]))); });
-      return <div className="drill"><div className="card"><h3>Revenue</h3><BarChart labels={MONTHS} series={[{ name: 'Plan', values: S('rev', false), color: 'var(--line2)' }, { name: 'Actual', values: S('rev', true), color: 'var(--accent)' }]} fmtY={money} /></div>
-        <div className="card"><h3>Operating expenses</h3><BarChart labels={MONTHS} series={[{ name: 'Budget', values: S('opex', false), color: 'var(--line2)' }, { name: 'Actual', values: S('opex', true), color: 'var(--bad)' }]} fmtY={money} /></div>
-        <div className="card"><h3>Cost of sales</h3><BarChart labels={MONTHS} series={[{ name: 'Plan', values: S('cos', false), color: 'var(--line2)' }, { name: 'Actual', values: S('cos', true), color: 'var(--warn)' }]} fmtY={money} /></div>
-        <div className="card"><h3>Capital spending</h3><BarChart labels={MONTHS} series={[{ name: 'Plan', values: S('capex', false), color: 'var(--line2)' }, { name: 'Actual', values: S('capex', true), color: 'var(--good)' }]} fmtY={money} /></div></div>; })()}
+
+    {tab === 'wcf' && (() => { const rows = db.cash_weekly.filter(w => us.includes(w.unit_id)); if (!rows.length) return <Empty>No weekly cash records for {name}. They come from the weekly tracker's cash section.</Empty>;
+      const weeks = Array.from(new Set(rows.map(r => r.week_start))).sort(); const V = (w: string, d: string, k: string) => sum(rows.filter(r => r.week_start === w && r.direction === d).map(r => Number(r[k]) || 0));
+      let cum = 0; const data = weeks.map(w => { const i = V(w, 'in', 'actual'), o = V(w, 'out', 'actual'); cum += i - o; return { w, i, o, pi: V(w, 'in', 'planned'), po: V(w, 'out', 'planned'), net: i - o, cum }; });
+      return <><div className="card"><h3>Weekly cash in and out — actual</h3><BarChart labels={data.map(d => weekLabel(new Date(d.w + 'T00:00:00Z')))} series={[{ name: 'In', values: data.map(d => d.i), color: 'var(--good)' }, { name: 'Out', values: data.map(d => d.o), color: 'var(--bad)' }]} fmtY={money} height={180} /></div>
+        <div className="row" style={{ margin: '10px 0 6px' }}><span className="sp" /><Export name="weekly-cash" rows={() => [['Week', 'Planned in', 'Actual in', 'Planned out', 'Actual out', 'Net', 'Cumulative net'], ...data.map(d => [d.w, d.pi, d.i, d.po, d.o, d.net, d.cum])]} /></div>
+        <div className="tw"><table className="t"><thead><tr><th>Week</th><th className="n">Planned in</th><th className="n">Actual in</th><th className="n">Planned out</th><th className="n">Actual out</th><th className="n">Net</th><th className="n" data-tip="Running total of net cash since the first week recorded.">Cumulative net</th></tr></thead><tbody>
+          {data.map(d => <tr key={d.w}><td>{weekLabel(new Date(d.w + 'T00:00:00Z'))}</td><td className="n">{money(d.pi)}</td><td className="n">{money(d.i)}</td><td className="n">{money(d.po)}</td><td className="n">{money(d.o)}</td><td className={'n' + (d.net < 0 ? ' neg' : '')}>{money(d.net)}</td><td className={'n' + (d.cum < 0 ? ' neg' : '')}>{money(d.cum)}</td></tr>)}
+        </tbody></table></div></>; })()}
+
+    {tab === 'trend' && (() => { const S = (k: string, a: boolean) => MONTHS.map((_, i) => { const r = IS_KEY(incomeStatement(db, us, [i + 1], false), k); return a ? (i + 1 <= last ? r.act : null) : r.plan; });
+      return <div className="drill">{([['rev', 'Revenue', 'var(--accent)'], ['gp', 'Gross profit', 'var(--good)'], ['opex', 'Operating expenses', 'var(--bad)'], ['ni', 'Net income', 'var(--accent)']] as const).map(([k, l, c]) =>
+        <div key={k} className="card"><h3>{l}</h3><BarChart labels={MONTHS} series={[{ name: 'Plan', values: S(k, false), color: 'var(--line2)' }, { name: 'Actual', values: S(k, true), color: c }]} fmtY={money} /></div>)}</div>; })()}
+
     {tab === 'lines' && (() => { const rows = ['rev', 'cos', 'opex', 'capex'].flatMap(sec => Array.from(new Set(us.flatMap(u => linesOf(db, u, sec).map(l => l.line_group || 'Other')))).map(g => { const pl = sum(us.map(u => planBy(db, u, sec, months, [g]))); const av = us.map(u => actualBy(db, u, sec, months, [g])); const a = av.every(x => x == null) ? null : sum(av); return { sec, g, pl, a }; })).filter(r => r.pl || r.a);
       return <><div className="row" style={{ marginBottom: 6 }}><span className="sp" /><Export name="plan-vs-actual" rows={() => [['Section', 'Group', 'Plan', 'Actual', 'Achieved'], ...rows.map(r => [r.sec, r.g, r.pl, r.a, r.a != null && r.pl ? pct(r.a / r.pl) : ''])]} /></div>
         <div className="tw"><table className="t"><thead><tr><th>Section</th><th>Product group / budget line</th><th className="n">Plan</th><th className="n">Actual</th><th>Achieved</th></tr></thead><tbody>{rows.map(r => <tr key={r.sec + r.g}><td>{({ rev: 'Revenue', cos: 'Cost of sales', opex: 'Opex', capex: 'Capex' } as Row)[r.sec]}</td><td>{r.g}</td><td className="n">{money(r.pl)}</td><td className="n">{money(r.a)}</td><td>{r.a != null && r.pl ? <><Bar p={r.a / r.pl} tone={r.sec === 'rev' ? undefined : r.a > r.pl ? 'bad' : 'good'} /> {pct(r.a / r.pl)}</> : ''}</td></tr>)}</tbody></table></div></>; })()}
+    <p className="note">Profit tax is applied at the rate set in Studio → Framework ({Number(db.settings.tax_rate?.rate ?? 30)}%) on positive profit before tax; depreciation and financial charges come from the budget lines named that way.</p>
   </>;
+}
+
+/** Cost of sales by product group, with each group's cost against its revenue and expandable to the planned items. */
+function CosBreakdown({ db, us, months, name }: { db: DB; us: string[]; months: number[]; name: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const groups = Array.from(new Set(us.flatMap(u => linesOf(db, u, 'cos').map(l => l.line_group || 'Other'))));
+  const A = (sec: string, g: string) => { const v = us.map(u => actualBy(db, u, sec, months, [g])); return v.every(x => x == null) ? null : sum(v); };
+  const rows = groups.map(g => ({ g, pl: sum(us.map(u => planBy(db, u, 'cos', months, [g]))), a: A('cos', g), rp: sum(us.map(u => planBy(db, u, 'rev', months, [g]))), ra: A('rev', g) })).filter(r => r.pl || r.a).sort((a, b) => (b.a ?? b.pl) - (a.a ?? a.pl));
+  const tot = { pl: sum(rows.map(r => r.pl)), a: rows.some(r => r.a != null) ? sum(rows.map(r => r.a || 0)) : null };
+  if (!rows.length) return <Empty>No cost of sales lines for {name}.</Empty>;
+  return <><div className="row" style={{ marginBottom: 6 }}><span className="mini">Click a group to see its planned cost items.</span><span className="sp" /><Export name="cost-of-sales" rows={() => [['Product group', 'Plan', 'Actual', 'Variance', 'Share of COS', 'Cost ÷ revenue (actual)'], ...rows.map(r => [r.g, r.pl, r.a, r.a == null ? null : r.a - r.pl, tot.a ? pct((r.a || 0) / tot.a) : '', r.ra ? pct((r.a || 0) / r.ra) : ''])]} /></div>
+    <div className="tw"><table className="t"><thead><tr><th>Product group</th><th className="n">Plan</th><th className="n">Actual</th><th className="n" data-tip="Actual − plan; red when cost is above plan.">Variance</th><th className="n" data-tip="This group's share of total actual cost of sales.">Share</th><th className="n" data-tip="Cost of sales ÷ revenue for the same group: 100% − gross margin. Plan figure underneath.">Cost ÷ revenue</th></tr></thead><tbody>
+      {rows.map(r => { const v = r.a == null ? null : r.a - r.pl; const items = us.flatMap(u => linesOf(db, u, 'cos').filter(l => (l.line_group || 'Other') === r.g));
+        return [<tr key={r.g} className="click" onClick={() => setOpen(open === r.g ? null : r.g)}><td><b>{open === r.g ? '▾' : '▸'} {r.g}</b></td><td className="n">{money(r.pl)}</td><td className="n">{money(r.a)}</td><td className={'n' + (v != null && v > 0 ? ' neg' : '')}>{money(v)}</td><td className="n">{tot.a ? pct((r.a || 0) / tot.a) : ''}</td><td className="n">{r.ra ? pct((r.a || 0) / r.ra) : '—'}<div className="mini">{r.rp ? pct(r.pl / r.rp) : ''}</div></td></tr>,
+          ...(open === r.g ? items.map(l => { const lp = sum(months.map(m => lineVals(l, false)[m - 1])); return <tr key={l.id}><td className="ind mini">{l.name}</td><td className="n mini">{money(lp)}</td><td className="mini" colSpan={4}>actuals are recorded per product group</td></tr>; }) : [])]; })}
+      <tr className="b"><td>Total cost of sales</td><td className="n">{money(tot.pl)}</td><td className="n">{money(tot.a)}</td><td className="n">{money(tot.a == null ? null : tot.a - tot.pl)}</td><td /><td /></tr>
+    </tbody></table></div></>;
 }
 
 export default function Reports() {
