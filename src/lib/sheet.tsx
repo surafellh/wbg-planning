@@ -5,8 +5,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 export type Col = { key: string; label: string; type?: 'text' | 'number' | 'select' | 'date' | 'ro'; options?: [string, string][]; placeholder?: string; width?: number; tip?: string; fmt?: (v: any, row: any) => ReactNode; total?: boolean; editable?: (row: any) => boolean };
 type Change = { i: number; key: string; old: any; val: any };
 
-export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height, empty, footer }: {
-  cols: Col[]; rows: any[]; onChange?: (i: number, key: string, v: any) => void; onAdd?: () => void; onDelete?: (i: number) => void; readOnly?: boolean; height?: number; empty?: string; footer?: ReactNode;
+export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height, empty, footer, sticky = true }: {
+  sticky?: boolean; cols: Col[]; rows: any[]; onChange?: (i: number, key: string, v: any) => void; onAdd?: () => void; onDelete?: (i: number) => void; readOnly?: boolean; height?: number; empty?: string; footer?: ReactNode;
 }) {
   const [sel, setSel] = useState<[number, number] | null>(null); const [edit, setEdit] = useState<string | null>(null);
   const undo = useRef<Change[]>([]); const redo = useRef<Change[]>([]); const box = useRef<HTMLDivElement>(null); const inp = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
@@ -38,14 +38,18 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
     const lines = text.replace(/\r/g, '').split('\n').filter((l, i, a) => l !== '' || i < a.length - 1);
     lines.forEach((line, dr) => line.split('\t').forEach((v, dc) => { const r = sel[0] + dr, c = sel[1] + dc; if (r < rows.length && c < cols.length && can(r, c)) { const col = cols[c]; let val: any = parse(col, v); if (col.type === 'select' && col.options) { const o = col.options.find(([id, l]) => id === v || l.toLowerCase() === v.trim().toLowerCase()); val = o ? o[0] : rows[r][col.key]; } set(r, col.key, val); } }));
   }
+  // keep the main column (first one that is not the reference code) and the code column visible when scrolling sideways
+  const stickTo = sticky ? Math.max(0, cols.findIndex(c => c.key !== 'code')) : -1;
+  const leftOf = (j: number) => 34 + cols.slice(0, j).reduce((a, c) => a + (c.width || 120), 0);
+  const stk = (j: number) => j <= stickTo ? { position: 'sticky' as const, left: leftOf(j), zIndex: 1 } : {};
   const totals = cols.map(c => c.total ? rows.filter(r => !r._header).reduce((s, r) => s + (Number(r[c.key]) || 0), 0) : null);
   return <div className="sheetwrap"><div className="sheet" ref={box} tabIndex={0} onKeyDown={onKey} onPaste={onPaste} style={height ? { maxHeight: height } : undefined}>
-    <table><thead><tr><th className="rn">#</th>{cols.map(c => <th key={c.key} style={{ width: c.width }} data-tip={c.tip}>{c.label}</th>)}{onDelete && !readOnly && <th className="rn" />}</tr></thead>
+    <table className={sticky ? 'stick1' : ''}><thead><tr><th className="rn">#</th>{cols.map((c, j) => <th key={c.key} className={j <= stickTo ? 'stk' : ''} style={{ width: c.width, minWidth: c.width, maxWidth: c.width, ...stk(j), ...(j <= stickTo ? { zIndex: 3 } : {}) }} data-tip={c.tip}>{c.label}</th>)}{onDelete && !readOnly && <th className="rn" />}</tr></thead>
       <tbody>{rows.map((r, i) => r._header ? <tr key={'h' + i} className="hdr-row"><td colSpan={cols.length + 2}>{r._header}</td></tr> : <tr key={r.id || i} className={r._dirty ? 'dirty' : ''}>
         <td className="rn">{i + 1}</td>
         {cols.map((c, j) => { const on = sel && sel[0] === i && sel[1] === j; const ed = on && edit !== null; const v = r[c.key]; const ro = !can(i, j);
-          return <td key={c.key} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={() => { if (!on) { commit(); setSel([i, j]); } }} onDoubleClick={() => can(i, j) && c.type !== 'select' && setEdit(v == null ? '' : String(v))}>
-            {ed ? <input ref={el => { inp.current = el; }} value={edit!} onChange={e => setEdit(e.target.value)} onBlur={commit} />
+          return <td key={c.key} style={{ width: c.width, minWidth: c.width, maxWidth: c.width, ...stk(j) }} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (j <= stickTo ? 'stk ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={e => { if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'SELECT') return; const open = can(i, j) && c.type !== 'select'; if (open) e.preventDefault(); if (!on) { commit(); setSel([i, j]); if (open) setEdit(v == null ? '' : String(v)); else box.current?.focus(); } else if (edit === null && open) setEdit(v == null ? '' : String(v)); }} title={ro && c.type !== 'ro' && !readOnly ? 'Locked' : undefined}>
+            {ed ? <input ref={el => { inp.current = el; }} type={c.type === 'date' ? 'date' : 'text'} inputMode={c.type === 'number' ? 'decimal' : undefined} value={edit!} onChange={e => setEdit(e.target.value)} onBlur={commit} />
               : c.type === 'select' && !ro ? <select className={v ? '' : 'empty'} value={v ?? ''} onChange={e => set(i, c.key, e.target.value || null)} onFocus={() => setSel([i, j])}>{<option value="">{c.placeholder || '—'}</option>}{(c.options || []).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
               : c.fmt ? c.fmt(v, r) : c.type === 'select' ? ((c.options || []).find(o => o[0] === v)?.[1] ?? '') : c.type === 'number' ? (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })) : (v ?? '')}
           </td>; })}
@@ -54,7 +58,7 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
         {!rows.length && <tr><td colSpan={cols.length + 2} className="note" style={{ padding: 14 }}>{empty || 'No rows yet.'}</td></tr>}
         {totals.some(t => t != null) && <tr className="tot"><td className="rn" />{cols.map((c, j) => <td key={c.key} className={c.type === 'number' ? 'n' : ''}>{j === 0 ? 'Total' : totals[j] != null ? totals[j]!.toLocaleString('en-US', { maximumFractionDigits: 0 }) : ''}</td>)}{onDelete && !readOnly && <td />}</tr>}
       </tbody></table></div>
-    <div className="sheetbar">{onAdd && !readOnly && <button className="btn sm" onClick={onAdd}>+ Row</button>}<span className="mini">Click a cell, type to fill, Enter to move down, paste a block from Excel, Ctrl+Z to undo.</span><span className="sp" />{footer}</div></div>;
+    <div className="sheetbar">{onAdd && !readOnly && <button className="btn sm" onClick={onAdd}>+ Row</button>}<span className="mini">Click a white cell to type · grey cells are worked out or locked · Enter moves down · paste a block from Excel · Ctrl+Z undo.</span><span className="sp" />{footer}</div></div>;
 }
 
 /** Local draft of rows with dirty tracking: edit freely, then Save or Discard. */

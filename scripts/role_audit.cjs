@@ -1,6 +1,6 @@
 // Walk the app as each role on mock data: nav items, page tabs, editable cells, empty states, errors, screenshots.
 const { chromium } = require('playwright'); const fs = require('fs'); const path = require('path'); const http = require('http');
-const ROOT = path.join(__dirname, '..'); const DIST = path.join(ROOT, 'dist'); const OUT = path.join(ROOT, 'shots', 'roles'); fs.mkdirSync(OUT, { recursive: true });
+const ROOT = path.join(__dirname, '..'); const DIST = path.join(ROOT, 'dist'); const OUT = path.join(ROOT, 'shots', 'roles');
 const base = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/pilot_bundle.json')));
 const UID = '11111111-1111-1111-1111-111111111111';
 function fixture(posPick) {
@@ -32,9 +32,11 @@ const PICKS = {
   'group-strategy': T => T.positions.find(p => p.role === 'group_strategy'),
   'executive': T => T.positions.find(p => p.role === 'executive'),
 };
+module.exports = { fixture, PICKS, UID };
+if (require.main === module) {
 const srv = http.createServer((req, res) => { let f = path.join(DIST, decodeURIComponent(req.url.split('?')[0])); if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'text/html' }); res.end(fs.readFileSync(f)); }).listen(4174);
 (async () => {
-  const b = await chromium.launch(); const report = [];
+  fs.mkdirSync(OUT, { recursive: true }); const b = await chromium.launch(); const report = [];
   for (const [name, pick] of Object.entries(PICKS)) {
     const { T, me } = fixture(pick); if (!me) { report.push(`## ${name}: no position in data`); continue; }
     const ctx = await b.newContext({ viewport: { width: 1360, height: 900 } }); const errors = []; const writes = [];
@@ -75,3 +77,4 @@ const srv = http.createServer((req, res) => { let f = path.join(DIST, decodeURIC
   fs.writeFileSync(path.join(OUT, 'report.md'), report.join('\n\n')); console.log(report.join('\n\n'));
   await b.close(); srv.close();
 })();
+}

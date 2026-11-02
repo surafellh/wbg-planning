@@ -8,45 +8,66 @@ import { cutoffLabel, FY, monthStart, MONTHS, curMonth, qOfMonth, weekStart, wee
 import { Seg, Empty, Pill, UnitPicker } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf, WeekReview, TeamView, MonthView, CheckIns, Blockers } from '../Work';
-import { isHead, SaveBar, headedOrgs } from './Plan';
+import { isHead, SaveBar, headedOrgs, useDetail, DetailToggle, PRI, orgOf, depOpts } from './Plan';
 
 const LEADS = ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'];
-const ST: [string, string][] = [['Not started', 'Not started'], ['In progress', 'In progress'], ['Done', 'Done'], ['Stuck', 'Stuck']];
+const ST: [string, string][] = [['Not started', 'Not started'], ['In progress', 'In progress'], ['Done', 'Done'], ['Stuck', 'Blocked'], ['Delayed', 'Delayed'], ['Closed', 'Closed — will not be done']];
 
 function ThisWeek() {
-  const { db, me, role } = useData(); const save = useSave(); const { t } = useTerms(); const [ws, setWs] = useState(() => weekStart(new Date())); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false);
+  const { db, me, role } = useData(); const save = useSave(); const { t } = useTerms(); const [ws, setWs] = useState(() => weekStart(new Date())); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false); const [detail, setDetail] = useDetail('week');
   const head = isHead(role); const team = useMemo(() => db && me ? (head ? teamOf(db, me, LEADS.includes(role)) : [me]) : [], [db, me, head, role]);
-  const wk = ymd(ws); const people = scope === 'me' ? [me!] : team;
+  const wk = ymd(ws); const people = useMemo(() => scope === 'me' ? [me!] : team, [scope, me, team]);
+  const name = (u: string) => db?.positions.find(p => p.user_id === u)?.holder_name || db?.profiles.find(p => p.id === u)?.full_name || '';
   const source = useMemo(() => { if (!db || !me) return []; const ids = new Set(people.map(p => p?.id));
-    return db.activities.filter(a => ids.has(a.owner_position_id) && a.week_start === wk).sort((a, b) => Number(b.top) - Number(a.top))
-      .map(a => ({ id: a.id, title: a.title, del: byId(db.deliverables, a.deliverable_id)?.title || (a.unplanned ? 'Unplanned' : ''), owner: a.owner_position_id, status: a.status, pct: a.pct, blocker: a.blocker || '', help: a.help_from_unit || '', note: a.note || '' })); }, [db, me, people, wk]);
+    return db.activities.filter(a => ids.has(a.owner_position_id) && a.week_start === wk).sort((a, b) => Number(b.top) - Number(a.top) || (a.priority || 9) - (b.priority || 9))
+      .map(a => ({ id: a.id, code: a.code || '', title: a.title, kind: a.kind || (a.unplanned ? 'Unplanned' : 'Task'), del: byId(db.deliverables, a.deliverable_id)?.title || (a.unplanned ? 'Unplanned' : ''), owner: a.owner_position_id, due: a.due_date || '', priority: a.priority != null ? String(a.priority) : '',
+        prev: a.prev_status ? `${a.prev_status}${a.prev_pct != null ? ' ' + a.prev_pct + '%' : ''}` : '', status: a.status, pct: a.pct, target: a.target, uom: a.uom || '', actual: a.actual, done: a.done_at ? String(a.done_at).slice(0, 10) : '',
+        blocker: a.blocker || '', help: a.help_from_unit || '', evidence: a.evidence_url || '', note: a.note || '', carried: a.carried_count || 0, upd: a.updated_at ? `${name(a.updated_by) || ''} ${String(a.updated_at).slice(5, 16).replace('T', ' ')}`.trim() : '' })); }, [db, me, people, wk]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
-  const prev = ymd(new Date(ws.getTime() - 7 * 864e5)); const carry = db.activities.filter(a => a.owner_position_id === me.id && a.week_start === prev && !['Done', 'Closed'].includes(a.status) && !db.activities.some(b => b.week_start === wk && b.title === a.title && b.owner_position_id === me.id));
-  const units: [string, string][] = [...db.org_units.filter(u => u.unit_id === me.unit_id && u.kind !== 'unit' && u.id !== me.org_unit_id).map(u => [u.id, u.name + ' (my unit)'] as [string, string]), ...db.org_units.filter(u => u.kind === 'unit').map(u => [u.id, u.name] as [string, string])];
-  const cols: Col[] = [{ key: 'title', label: 'Activity', type: 'text', width: 280 }, { key: 'del', label: t('deliverable'), type: 'ro', width: 200 },
+  const prevWk = ymd(new Date(ws.getTime() - 7 * 864e5)); const carry = db.activities.filter(a => a.owner_position_id === me.id && a.week_start === prevWk && !['Done', 'Closed'].includes(a.status) && !db.activities.some(b => b.week_start === wk && b.owner_position_id === me.id && (b.carried_from === a.id || (a.code && b.code === a.code) || b.title === a.title)));
+  const mode = db.settings.work_rules?.activities || 'both';
+  const cut = cutoffOf(ws); const now = new Date(); const closed = now > cut && !head; // after the cut-off the week is closed for team members
+  const canRow = (r: Row) => !closed && ((r.owner || me.id) === me.id || (head && mode !== 'members'));
+  const cols: Col[] = [
+    ...(detail ? [{ key: 'code', label: 'Ref', type: 'ro' as const, width: 74 }] : []),
+    { key: 'title', label: 'Activity / task', type: 'text', width: 260, editable: r => canRow(r) && r.kind === 'Unplanned', tip: 'Planned tasks are renamed in Plan → Weekly activities; unplanned ones can be renamed here.' },
+    { key: 'del', label: t('deliverable'), type: 'ro', width: 180 },
     ...(scope === 'team' ? [{ key: 'owner', label: 'Owner', type: 'ro' as const, width: 130, fmt: (v: any) => posName(db, v) }] : []),
-    { key: 'status', label: 'Status', type: 'select', options: ST, width: 120 }, { key: 'pct', label: '% done', type: 'number', width: 80 },
-    { key: 'blocker', label: 'Blocker', type: 'text', width: 200, tip: 'What is in the way. Writing a blocker marks the activity stuck and tells your manager.' },
-    { key: 'help', label: 'Help from', type: 'select', options: units, width: 150, tip: 'Another unit whose help you need — their head is notified.' }, { key: 'note', label: 'Note', type: 'text', width: 200 }];
+    ...(detail ? [{ key: 'dept', label: 'Department', type: 'ro' as const, width: 120, fmt: (_: any, r: Row) => orgOf(db, r.owner) }, { key: 'priority', label: 'Priority', type: 'ro' as const, width: 75, fmt: (v: any) => PRI.find(x => x[0] === v)?.[1] || '' }] : []),
+    { key: 'due', label: 'Due date', type: 'date', width: 115, editable: canRow, tip: 'Move it if the task is rescheduled.' },
+    ...(detail ? [{ key: 'prev', label: 'Previous status', type: 'ro' as const, width: 120, tip: 'Status at the end of last week, for tasks carried over.' }] : []),
+    { key: 'status', label: 'Status', type: 'select', options: ST, width: 120, editable: canRow, tip: 'Done = finished. Blocked = cannot move without help. Delayed = behind its due date but moving. Closed = will no longer be done.' },
+    { key: 'pct', label: '% complete', type: 'number', width: 90, editable: canRow },
+    ...(detail ? [{ key: 'target', label: 'Target', type: 'ro' as const, width: 75 }, { key: 'actual', label: 'Actual', type: 'number' as const, width: 80, editable: canRow, tip: 'For target-based tasks: what was reached this week.' }, { key: 'uom', label: 'Unit', type: 'ro' as const, width: 60 },
+      { key: 'done', label: 'Completed on', type: 'ro' as const, width: 105 }] : []),
+    { key: 'blocker', label: 'Blocker / dependency', type: 'text', width: 200, editable: canRow, tip: 'What is in the way. Writing a blocker marks the activity Blocked and tells your manager.' },
+    { key: 'help', label: 'Help from', type: 'select', options: depOpts(db, me), width: 160, editable: canRow, tip: 'The department or unit whose help you need — their head is notified.' },
+    ...(detail ? [{ key: 'evidence', label: 'Evidence link', type: 'text' as const, width: 170, editable: canRow, tip: 'Link to the file, photo or document that shows it is done.' }] : []),
+    { key: 'note', label: 'Notes', type: 'text', width: 200, editable: canRow },
+    ...(detail ? [{ key: 'carried', label: 'Carried', type: 'ro' as const, width: 70, fmt: (v: any) => v ? `${v} wk` : '' }, { key: 'upd', label: 'Updated by', type: 'ro' as const, width: 150 }] : [])];
   async function doSave() {
     setBusy(true); let err: string | null = null; const stuckNew: Row[] = [];
     for (const r of d.all.filter(r => r._dirty)) {
       if (r._deleted) { await sb.from('activities').delete().eq('id', r.id); continue; }
-      let status = r.status; let p = Math.max(0, Math.min(100, Number(r.pct) || 0)); if (p === 100) status = 'Done'; if (status === 'Done') p = 100; if (r.blocker?.trim() && status !== 'Done') status = 'Stuck';
+      let status = r.status; let p = Math.max(0, Math.min(100, Number(r.pct) || 0)); if (p === 100 && status !== 'Closed') status = 'Done'; if (status === 'Done') p = 100; if (r.blocker?.trim() && !['Done', 'Closed'].includes(status)) status = 'Stuck';
+      if (status === 'Not started' && p > 0) status = 'In progress';
       const s0 = source.find(x => x.id === r.id); if (status === 'Stuck' && s0?.status !== 'Stuck') stuckNew.push(r);
-      const x = await sb.from('activities').update({ title: r.title, status, pct: p, blocker: r.blocker?.trim() || null, help_from_unit: r.help || null, note: r.note || null }).eq('id', r.id); err = err || x.error?.message || null;
+      const x = await sb.from('activities').update({ title: r.title, status, pct: p, due_date: r.due || null, actual: r.actual ?? null, blocker: r.blocker?.trim() || null, help_from_unit: r.help || null, evidence_url: r.evidence || null, note: r.note || null }).eq('id', r.id); err = err || x.error?.message || null;
     }
-    for (const r of stuckNew) { const o = byId(db!.positions, r.owner); await notifyPositions(db!, [o && managerOf(db!, o)?.id, ...(r.help ? db!.positions.filter(x => x.org_unit_id === r.help && x.level !== 'employee').map(x => x.id) : [])], 'blocker', `Stuck: ${r.title} — ${r.blocker}`, '/inbox'); }
+    for (const r of stuckNew) { const o = byId(db!.positions, r.owner); await notifyPositions(db!, [o && managerOf(db!, o)?.id, ...(r.help ? db!.positions.filter(x => x.org_unit_id === r.help && x.level !== 'employee').map(x => x.id) : [])], 'blocker', `Blocked: ${r.title} — ${r.blocker}`, '/inbox'); }
     await save(() => Promise.resolve({ error: err }) as any, ['activities'], 'Week updated'); setBusy(false);
   }
-  const cut = cutoffOf(ws); const now = new Date();
+  async function carryOver() {
+    await save(() => sb.from('activities').insert(carry.map(a => ({ unit_id: a.unit_id, owner_position_id: me!.id, week_start: wk, code: a.code, title: a.title, kind: a.kind, category: a.category, deliverable_id: a.deliverable_id, key_result_id: a.key_result_id, unplanned: a.unplanned, priority: a.priority, due_date: a.due_date, outcome: a.outcome, target: a.target, uom: a.uom, weight: a.weight, help_from_unit: a.help_from_unit, dependency: a.dependency,
+      status: a.status === 'Stuck' ? 'Stuck' : a.status === 'Not started' ? 'Not started' : 'In progress', blocker: a.blocker, pct: a.pct, top: a.top, prev_status: a.status, prev_pct: a.pct, carried_from: a.id, carried_count: (a.carried_count || 0) + 1 }))), ['activities'], `${carry.length} carried over`);
+  }
   return <div className="stack">
     <div className="row"><button className="btn sm" onClick={() => setWs(new Date(ws.getTime() - 7 * 864e5))}>‹</button><b>{weekLabel(ws)}</b><button className="btn sm" onClick={() => setWs(new Date(ws.getTime() + 7 * 864e5))}>›</button><button className="btn sm" onClick={() => setWs(weekStart(new Date()))}>This week</button>
-      {now < cut && now >= ws && <Pill tone="warn">Update by {cutoffLabel()}</Pill>}<span className="sp" />{head && <Seg value={scope} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setScope} />}</div>
-    {carry.length > 0 && scope === 'me' && <div className="banner">{carry.length} unfinished from last week. <button className="btn sm" onClick={() => save(() => sb.from('activities').insert(carry.map(a => ({ unit_id: a.unit_id, owner_position_id: me.id, week_start: wk, title: a.title, deliverable_id: a.deliverable_id, key_result_id: a.key_result_id, unplanned: a.unplanned, status: a.status === 'Stuck' ? 'Stuck' : 'In progress', blocker: a.blocker, pct: a.pct, top: a.top }))), ['activities'], 'Carried over')}>Carry them over</button></div>}
-    {!d.rows.length ? <Empty>No activities planned for this week. <Link to="/plan?tab=week">Plan them in Plan → Weekly activities</Link>, or add one here.</Empty> : <Sheet cols={cols} rows={d.rows} onChange={d.change} />}
-    {scope === 'me' && <QuickAdd wk={wk} />}
+      {now < cut && now >= ws && <Pill tone="warn">Update by {cutoffLabel()}</Pill>}{closed && <Pill tone="none">Closed after {cutoffLabel()} — ask your manager to change it</Pill>}<span className="sp" /><DetailToggle v={detail} set={setDetail} />{head && <Seg value={scope} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setScope} />}</div>
+    {carry.length > 0 && scope === 'me' && <div className="banner">{carry.length} unfinished from last week. <button className="btn sm" onClick={carryOver}>Carry them over</button> <span className="mini">They keep their reference code and show last week's status.</span></div>}
+    {!d.rows.length ? <Empty>No activities planned for this week. <Link to="/plan?tab=week">Plan them in Plan → Weekly activities</Link>, or add one below.</Empty> : <Sheet cols={cols} rows={d.rows} onChange={d.change} />}
+    {scope === 'me' && !closed && <QuickAdd wk={wk} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
     {scope === 'me' && <WeekReview me={me} wk={wk} mine />}
   </div>;
@@ -57,7 +78,7 @@ function QuickAdd({ wk }: { wk: string }) {
   if (!db || !me) return null; const dels = db.deliverables.filter(d => d.owner_position_id === me.id && d.month === curMonth() && d.status !== 'removed');
   return <div className="row"><input type="text" style={{ flex: 1 }} placeholder="Add an activity to this week (e.g. something unplanned that came up)" value={t} onChange={e => setT(e.target.value)} />
     <select value={del} onChange={e => setDel(e.target.value)} aria-label="Deliverable"><option value="">Unplanned / no deliverable</option>{dels.map(d => <option key={d.id} value={d.id}>{d.title.slice(0, 50)}</option>)}</select>
-    <button className="btn" disabled={!t.trim()} onClick={async () => { if (await save(() => sb.from('activities').insert({ unit_id: me.unit_id, owner_position_id: me.id, week_start: wk, title: t.trim(), deliverable_id: del || null, key_result_id: byId(db.deliverables, del)?.key_result_id || null, unplanned: !del, status: 'In progress', pct: 0, created_by: user.id }), ['activities'], 'Added')) setT(''); }}>Add</button></div>;
+    <button className="btn" disabled={!t.trim()} onClick={async () => { if (await save(() => sb.from('activities').insert({ unit_id: me.unit_id, owner_position_id: me.id, week_start: wk, title: t.trim(), deliverable_id: del || null, key_result_id: byId(db.deliverables, del)?.key_result_id || null, unplanned: !del, kind: 'Unplanned', status: 'In progress', pct: 0, created_by: user.id }), ['activities'], 'Added')) setT(''); }}>Add</button></div>;
 }
 
 function DeliverablesRec() {
@@ -68,12 +89,15 @@ function DeliverablesRec() {
 }
 function MyDeliverables() {
   const { db, me, role } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [busy, setBusy] = useState(false);
-  const source = useMemo(() => db && me ? db.deliverables.filter(x => x.owner_position_id === me.id && x.month === m && x.status !== 'removed').map(x => ({ id: x.id, title: x.title, kr: byId(db.key_results, x.key_result_id)?.title || '', target: x.target, actual: x.actual, status: x.status === 'done' || x.status === 'accepted' ? 'done' : 'planned', state: x.status, evidence: x.evidence_url || '', note: x.note || '', feedback: x.feedback || '' })) : [], [db, me, m]);
+  const source = useMemo(() => db && me ? db.deliverables.filter(x => x.owner_position_id === me.id && x.month === m && x.status !== 'removed').map(x => ({ id: x.id, code: x.code || '', kind: x.kind || '', due: x.due_date || '', uom: x.uom || '', weight: x.weight, title: x.title, kr: byId(db.key_results, x.key_result_id)?.title || '', target: x.target, actual: x.actual, status: x.status === 'done' || x.status === 'accepted' ? 'done' : 'planned', state: x.status, evidence: x.evidence_url || '', note: x.note || '', feedback: x.feedback || '' })) : [], [db, me, m]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
-  const cols: Col[] = [{ key: 'title', label: t('deliverable'), type: 'ro', width: 260 }, { key: 'kr', label: t('key_result'), type: 'ro', width: 200 }, { key: 'target', label: 'Target', type: 'ro', width: 80 },
-    { key: 'actual', label: 'Delivered', type: 'number', width: 90 }, { key: 'status', label: 'Delivered?', type: 'select', options: [['planned', 'Not yet'], ['done', 'Yes — send for acceptance']], width: 190, editable: r => r.state !== 'accepted' },
-    { key: 'evidence', label: 'Evidence link', type: 'text', width: 200, tip: 'A link to the document, photo or file that shows it is done.' }, { key: 'note', label: 'Note', type: 'text', width: 180 },
+  const open = (r: Row) => r.state !== 'accepted';
+  const cols: Col[] = [{ key: 'code', label: 'Ref', type: 'ro', width: 74 }, { key: 'title', label: t('deliverable'), type: 'ro', width: 240 }, { key: 'kind', label: 'Result type', type: 'ro', width: 110 }, { key: 'kr', label: t('key_result'), type: 'ro', width: 190 }, { key: 'due', label: 'Due', type: 'ro', width: 95 },
+    { key: 'acts', label: 'Weekly tasks', type: 'ro', width: 110, fmt: (_, r) => { const a = db.activities.filter(x => x.deliverable_id === r.id); return a.length ? `${a.filter(x => x.status === 'Done').length} / ${a.length} done` : '—'; }, tip: 'Weekly activities linked to this deliverable.' },
+    { key: 'target', label: 'Target', type: 'ro', width: 75 }, { key: 'actual', label: 'Achieved', type: 'number', width: 90, editable: open, tip: 'For target-based deliverables: the number reached.' }, { key: 'uom', label: 'Unit', type: 'ro', width: 60 }, { key: 'weight', label: 'Weight %', type: 'ro', width: 75 },
+    { key: 'status', label: 'Delivered?', type: 'select', options: [['planned', 'Not yet'], ['done', 'Yes — send for acceptance']], width: 190, editable: open },
+    { key: 'evidence', label: 'Evidence link', type: 'text', width: 200, editable: open, tip: 'A link to the document, photo or file that shows it is done.' }, { key: 'note', label: 'Note', type: 'text', width: 180, editable: open },
     { key: 'state', label: 'Manager', type: 'ro', width: 120, fmt: v => v === 'accepted' ? '✓ accepted' : v === 'returned' ? 'returned' : v === 'done' ? 'waiting' : '' }];
   async function doSave() {
     setBusy(true); let err: string | null = null; const sent: Row[] = [];
