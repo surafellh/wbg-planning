@@ -311,3 +311,21 @@ select option, select optgroup{color:var(--ink);background-color:var(--panel)}
 .sheet table.stick1 td.stk.ro{background:var(--sunk)}
 .sheet table.stick1 td.stk.sel{background:var(--info-soft)}
 .sheet table.stick1 tr.dirty td.stk:not(.sel){background:var(--chip)}
+/* cascade */
+.clegend{display:flex;flex-direction:column;gap:2px;padding:10px 14px;margin-bottom:12px;border-radius:12px;background:var(--sunk)}
+.cpil{margin-bottom:18px}
+.cpilh{display:flex;align-items:center;gap:10px;background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:12px}
+.cpilh small,.cgoalh small,.chead small{display:block;font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.04em}
+.cgoal{margin:10px 0 0 18px;padding-left:14px;border-left:2px solid var(--line2)}
+.cgoalh{display:flex;align-items:center;gap:10px;padding:8px 0}
+.ckids{display:flex;flex-direction:column;gap:8px;margin-left:16px;padding-left:14px;border-left:2px dashed var(--line2)}
+.cnode{background:var(--panel);border:1px solid var(--line);border-radius:12px;position:relative}
+.cnode::before{content:"";position:absolute;left:-16px;top:26px;width:14px;border-top:2px dashed var(--line2)}
+.cnode.mine{border:2px solid var(--accent);box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.cnode.faint{opacity:.55}
+.chead{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer}
+.chead b{display:block;font-weight:700}.chead .mini{display:block}
+.ckrs{padding:0 12px 8px 60px}
+.cme{margin:0 12px 10px 60px;padding:8px 10px;border-radius:10px;background:var(--info-soft)}
+.cme small{display:block;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:4px}
+.cnode>.ckids{margin:0 12px 12px 30px}
