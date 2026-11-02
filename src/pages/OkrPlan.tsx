@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krsOf, childObjectives, sum, fmt, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds } from '../lib/calc';
+import { krsOf, childObjectives, sum, fmt, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds, ownShare } from '../lib/calc';
 import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter } from '../lib/ui';
 import { Link } from 'react-router-dom';
 import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer } from './Goals';
@@ -59,7 +59,7 @@ function ObjModal({ unit, init, onClose }: { unit: string; init: Row; onClose: (
     <div className="g2"><label className="f">Owned by (organisation)<select value={f.org_unit_id || ''} onChange={e => set('org_unit_id', e.target.value)}>{orgs.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label></div>
     <div className="g2">{f.link !== 'goal' && <label className="f" data-tip="Its share in the objective above. The objectives under one parent add up to 100% — at every level (unit → departments, department → divisions).">Weight in what it delivers (%)<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} /></label>}
-      <label className="f" data-tip="When this objective has its own key results AND objectives below it, its score = own share × its key results + the rest × the objectives below. Default 50%.">Share from its own key results (%)<NumIn value={f.own_weight} onChange={v => set('own_weight', v)} /></label></div>
+      <label className="f" data-tip="When this objective has its own key results AND objectives below it, its score = own share × its key results + the rest × the objectives below. Set it for this objective; empty uses the level default from Studio → Configuration.">Share from its own key results (%)<NumIn value={f.own_weight} onChange={v => set('own_weight', v)} /><span className="mini">Objectives below get {100 - (f.own_weight ?? ownShare(db, { level: kindToLevel(byId(db.org_units, f.org_unit_id)?.kind || 'unit') }))}%{f.own_weight == null ? ' (level default)' : ''}</span></label></div>
     <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.text?.trim() || (f.link === 'goal' && !f.unit_goal_id)} onClick={go}>Save</button></div>
   </Modal>;
 }
@@ -144,8 +144,8 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
 }
 
 export default function OkrPlan() {
-  const { db, unit } = useData(); const save = useSave();
-  const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
+  const { db, unit, me } = useData(); const save = useSave();
+  const [p, setP] = usePeriod(); const [org, setOrg] = useState(() => me && ['department', 'division'].includes(me.level) ? me.org_unit_id : ''); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
   const unitOrg = unit;
@@ -157,6 +157,7 @@ export default function OkrPlan() {
     <button className="btn sm" data-tip="Pause: keep it but stop scoring it (e.g. focus changed). Resume any time." onClick={() => { const st = (o.state || 'active') === 'active' ? 'paused' : 'active'; const why = st === 'paused' ? prompt('Why is it paused?') : ''; if (st === 'paused' && !why) return; save(() => sb.from('objectives').update({ state: st, state_reason: why || null }).eq('id', o.id), ['objectives'], st === 'paused' ? 'Paused' : 'Resumed'); }}>{(o.state || 'active') === 'active' ? 'Pause' : 'Resume'}</button>
     {krsOf(db, o.id).length > 0 && Math.round(krW(o.id)) !== 100 && <Pill tone="warn">KR weights {fmt(krW(o.id))}%</Pill>}
     {childObjectives(db, o.id).length > 0 && Math.round(kidW(o.id)) !== 100 && <Pill tone="warn">cascade {fmt(kidW(o.id))}%</Pill>}
+    {krsOf(db, o.id).length > 0 && childObjectives(db, o.id).length > 0 && <span className={'ownshare' + (o.own_weight == null ? ' unset' : '')} data-tip="This objective has its own key results and objectives below it. Own share = how much of its score comes from its own key results; the rest comes from the objectives below. Set it for each objective.">Own KRs <input type="number" min={0} max={100} defaultValue={ownShare(db, o)} onBlur={e => { const v = Number(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100 && v !== Number(o.own_weight)) save(() => sb.from('objectives').update({ own_weight: v }).eq('id', o.id), ['objectives'], 'Own share saved'); }} />% · below {100 - ownShare(db, o)}%{o.own_weight == null && ' (default)'}</span>}
     <button className="btn sm" onClick={() => setKm({ objective_id: o.id, owner_position_id: o.owner_position_id })}>+ Key result</button>
     <button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: o.org_unit_id, parent_objective_id: o.id, owner_position_id: null })}>+ Below</button>
     <button className="btn sm" onClick={() => setOm(o)}>Edit</button>

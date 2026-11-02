@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useData, useSave, byId, posName, notifyPositions, managerOf, type DB, type Row } from '../lib/data';
 import { Thread } from '../lib/social';
 import { sb } from '../lib/supabase';
-import { weekStart, weekLabel, ymd, monthOf, MONTHS, krsOf, cutoffOf, curMonth, FY, krState, pct, workStats, delivScore, periodLabel, currentPeriod, qOfMonth } from '../lib/calc';
+import { weekStart, weekLabel, ymd, monthOf, MONTHS, krsOf, cutoffOf, cutoffLabel, curMonth, FY, krState, pct, workStats, delivScore, periodLabel, currentPeriod, qOfMonth } from '../lib/calc';
 import { Page, Seg, Pill, Empty, Modal, NumIn, Drawer, Bar, UnitPicker, StatePill } from '../lib/ui';
 import { KrDrawer } from './Goals';
 
@@ -115,7 +115,7 @@ export function MyWeek({ who, ws, setWs }: { who: Row; ws: Date; setWs: (d: Date
   return <div className="drill" style={{ gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)' }}>
     <div className="stack">
       <div className="row"><button className="btn sm" onClick={() => setWs(new Date(ws.getTime() - 7 * 864e5))}>‹</button><b>{weekLabel(ws)}</b><span className="note">{fmtD(ws)} – {fmtD(new Date(ws.getTime() + 6 * 864e5))}</span><button className="btn sm" onClick={() => setWs(new Date(ws.getTime() + 7 * 864e5))}>›</button><button className="btn sm" onClick={() => setWs(weekStart(new Date()))}>This week</button><span className="sp" />
-        {now < cutoff && now >= ws ? <Pill tone="warn">Update by Sat 2:00 PM · {Math.max(0, Math.ceil((cutoff.getTime() - now.getTime()) / 864e5))} day(s)</Pill> : now >= cutoff ? <Pill>Week closed</Pill> : null}</div>
+        {now < cutoff && now >= ws ? <Pill tone="warn">Update by {cutoffLabel()} · {Math.max(0, Math.ceil((cutoff.getTime() - now.getTime()) / 864e5))} day(s)</Pill> : now >= cutoff ? <Pill>Week closed</Pill> : null}</div>
       {editable && <div className="card" style={{ padding: 10 }}><div className="row"><input type="text" style={{ flex: 1, minWidth: 200 }} placeholder={`Add an activity for ${mine ? 'this week' : who.holder_name} — press Enter`} value={t} onChange={e => setT(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} />
         <select value={link} onChange={e => setLink(e.target.value)} aria-label="Link to"><option value="">Not linked (unplanned)</option>{myDels.length > 0 && <optgroup label={`Deliverables · ${MONTHS[month - 1]}`}>{myDels.map(d => <option key={d.id} value={'d:' + d.id}>{d.title}</option>)}</optgroup>}{myKrs.length > 0 && <optgroup label="My key results">{myKrs.map(k => <option key={k.id} value={'k:' + k.id}>{k.title.slice(0, 70)}</option>)}</optgroup>}</select>
         <button className="btn pri" onClick={add}>Add</button></div>

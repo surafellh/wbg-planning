@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { sb } from './lib/supabase';
-import { DataProvider, ROLE_NAME, useData, useTerms, useWindows } from './lib/data';
+import { DataProvider, ROLE_NAME, useData, useTerms, useWindows, moduleOn } from './lib/data';
 import { weekStart } from './lib/calc';
 import { Seg } from './lib/ui';
 import { Bell } from './lib/social';
@@ -10,7 +10,7 @@ import { ClaimScreen } from './pages/Claim';
 import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
 import { RevenuePlan, BudgetPlan } from './pages/AnnualPlan';
-import { PlanCalendar } from './pages/Resources';
+import { PlanCalendar, Resources, Rescope } from './pages/Resources';
 import { teamOf } from './pages/Work';
 import { PerfOrg, PerfPeople } from './pages/Performance';
 import Reports from './pages/Reports';
@@ -20,7 +20,7 @@ import { InboxPage, Me, Today } from './pages/work/Inbox';
 import { PlanPage } from './pages/work/Plan';
 import { RecordPage } from './pages/work/Record';
 import { OurStrategy } from './pages/work/Strategy';
-import { RescopeEditor, ResourcesMonthly, Portfolio, Backup } from './pages/studio/More';
+import { RescopeEditor, ResourcesMonthly, Portfolio, Backup, ErpReplan } from './pages/studio/More';
 import { Search } from './lib/search';
 import { Overview, Alignment, WhoDoesWhat } from './pages/insights/Insights';
 import { Monitor, StrategyBuilder, Scorecards, Framework, Audit } from './pages/studio/Studio';
@@ -45,18 +45,18 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       const lead = role !== 'employee'; const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)).filter(x => x.id !== me.id) : []; const ids = new Set(team.map(x => x.id));
       const inbox = db.objectives.filter(o => o.status === 'Submitted' && ids.has(o.owner_position_id)).length + db.deliverables.filter(d => d.status === 'done' && ids.has(d.owner_position_id)).length + db.week_reviews.filter(r => ids.has(r.position_id) && r.submitted_at && !r.feedback_at).length + db.scorecards.filter(s => ids.has(s.position_id) && s.status === 'Discuss').length;
       const unread = db.messages.filter(m => m.to_user === me.user_id && !m.read_at).length;
-      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, { to: '/strategy', label: 'Our strategy', icon: I.strategy }, { to: '/plan', label: 'Plan', icon: I.plan }, { to: '/record', label: 'Record', icon: I.deliv },
-        { to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { to: '/me', label: 'My performance', icon: I.me }];
+      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'Our strategy', icon: I.strategy }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
+        { k: 'inbox', to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { k: 'me', to: '/me', label: 'My performance', icon: I.me }].filter(x => W.work(x.k))];
       return [{ items }];
     }
     if (win === 'insights') return [{ items: [{ to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
-      { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, { to: '/insights/projects', label: 'Projects', icon: I.plan }] },
+      { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, ...(moduleOn(db, 'projects') ? [{ to: '/insights/projects', label: 'Projects', icon: I.plan }] : [])] },
       { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
     const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
     const g: { label?: string; items: Item[] }[] = [{ items: f([{ k: 'monitor', to: '/studio/monitor', label: 'Process monitor', icon: I.monitor }]) },
-      { label: 'Plan', items: f([{ k: 'strategy', to: '/studio/strategy', label: 'Strategy builder', icon: I.strategy }, { k: 'okr', to: '/studio/okr', label: `${t('objective')} planner`, icon: I.goals }, { k: 'targets', to: '/studio/targets', label: 'Targets & progress', icon: I.plan }, { k: 'revenue', to: '/studio/revenue', label: 'Revenue plan', icon: I.money }, { k: 'budget', to: '/studio/budget', label: 'Budget', icon: I.money }, { k: 'resources', to: '/studio/resources', label: 'Resources & payments', icon: I.res }, { k: 'rescope', to: '/studio/rescope', label: 'Rescope & versions', icon: I.plan }, { k: 'calendar', to: '/studio/calendar', label: 'Planning calendar', icon: I.week }]) },
-      { label: 'Performance', items: f([{ k: 'scorecards', to: '/studio/scorecards', label: 'Scorecards', icon: I.card }, { k: 'projects', to: '/studio/projects', label: 'Project portfolio', icon: I.plan }]) }];
-    if (W.studioAdmin) g.push({ label: 'System', items: [{ to: '/studio/framework', label: 'Framework & rules', icon: I.cog }, { to: '/studio/people', label: 'People & access', icon: I.people }, { to: '/studio/import', label: 'Data import', icon: I.res }, { to: '/studio/backup', label: 'Backup & restore', icon: I.res }, { to: '/studio/audit', label: 'Audit log & undo', icon: I.audit }] });
+      { label: 'Plan', items: f([{ k: 'strategy', to: '/studio/strategy', label: 'Strategy builder', icon: I.strategy }, { k: 'okr', to: '/studio/okr', label: `${t('objective')} planner`, icon: I.goals }, { k: 'targets', to: '/studio/targets', label: 'Targets & progress', icon: I.plan }, { k: 'revenue', to: '/studio/revenue', label: 'Revenue plan', icon: I.money }, { k: 'budget', to: '/studio/budget', label: 'Budget', icon: I.money }, { k: 'resources', to: '/studio/resources', label: 'Resources & payments', icon: I.res }, { k: 'rescope', to: '/studio/rescope', label: 'Rescope & change requests', icon: I.plan }, { k: 'calendar', to: '/studio/calendar', label: 'Planning calendar', icon: I.week }]) },
+      { label: 'Performance', items: f([{ k: 'scorecards', to: '/studio/scorecards', label: 'Scorecards', icon: I.card }, { k: 'projects', to: '/studio/projects', label: 'Project portfolio', icon: I.plan }, ...(moduleOn(db, 'erp_replan') ? [{ k: 'replan', to: '/studio/replan', label: 'ERP OKR replan', icon: I.goals }] : [])]) }];
+    if (W.studioAdmin) g.push({ label: 'System', items: [{ to: '/studio/framework', label: 'Configuration', icon: I.cog }, { to: '/studio/people', label: 'People & access', icon: I.people }, { to: '/studio/import', label: 'Data import', icon: I.res }, { to: '/studio/backup', label: 'Backup & restore', icon: I.res }, { to: '/studio/audit', label: 'Audit log & undo', icon: I.audit }] });
     return g.filter(x => x.items.length);
   }, [db, me, role, can, t, win, W]);
 }
@@ -75,6 +75,12 @@ function SeeAs() {
     <select value={viewAs || ''} onChange={e => { const id = e.target.value || null; setViewAs(id); const p = id && db.positions.find(x => x.id === id); if (p && p.unit_id) setUnit(p.unit_id); nav('/today'); }}>
       <option value="">Myself</option>{opts.map(g => <optgroup key={g.label} label={g.label}>{g.options.map(([id, l]) => <option key={id} value={id}>{l}</option>)}</optgroup>)}
     </select></label>;
+}
+
+/** Two or more views of one Studio page, switched at the top (keeps earlier views available instead of dropping them). */
+function Views({ views }: { views: [string, string, ReactNode][] }) {
+  const [v, setV] = useState(views[0][0]);
+  return <><div className="viewsw"><Seg value={v} options={views.map(([k, l]) => [k, l] as [string, string])} onChange={setV} /></div>{views.find(x => x[0] === v)?.[2]}</>;
 }
 
 function Shell() {
@@ -112,14 +118,14 @@ function Shell() {
         <Route path="/" element={<Navigate to="/today" replace />} />
         {/* Work window */}
         <Route path="/today" element={<Today />} />
-        <Route path="/strategy" element={<OurStrategy />} />
-        <Route path="/plan" element={<PlanPage />} />
-        <Route path="/record" element={<RecordPage />} />
+        <Route path="/strategy" element={ok(W.work('strategy'), <OurStrategy />)} />
+        <Route path="/plan" element={ok(W.work('plan'), <PlanPage />)} />
+        <Route path="/record" element={ok(W.work('record'), <RecordPage />)} />
         <Route path="/week" element={<Navigate to="/record" replace />} />
         <Route path="/goals" element={<Navigate to="/strategy" replace />} />
         <Route path="/goals/new" element={<NewObjective />} />
         <Route path="/deliverables" element={<Navigate to="/plan?tab=deliverables" replace />} />
-        <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/inbox" element={ok(W.work('inbox'), <InboxPage />)} />
         <Route path="/me" element={<Me />} />
         {/* Insights window */}
         <Route path="/insights" element={<Navigate to="/insights/overview" replace />} />
@@ -141,8 +147,9 @@ function Shell() {
         <Route path="/studio/targets" element={S('targets', <GoalsQuarter />)} />
         <Route path="/studio/revenue" element={S('revenue', <RevenuePlan />)} />
         <Route path="/studio/budget" element={S('budget', <BudgetPlan />)} />
-        <Route path="/studio/resources" element={S('resources', <ResourcesMonthly />)} />
-        <Route path="/studio/rescope" element={S('rescope', <RescopeEditor />)} />
+        <Route path="/studio/resources" element={S('resources', <Views views={[['month', 'Monthly priorities & payments', <ResourcesMonthly />], ['quarter', 'Quarter waterline', <Resources />]]} />)} />
+        <Route path="/studio/rescope" element={S('rescope', <Views views={[['grid', 'Quarter grid (approved vs new)', <RescopeEditor />], ['whole', 'Whole-plan rescope / replan', <Rescope />]]} />)} />
+        <Route path="/studio/replan" element={ok(W.studio && W.item('replan'), <ErpReplan />)} />
         <Route path="/studio/projects" element={ok(W.item('projects'), <Portfolio edit />)} />
         <Route path="/studio/calendar" element={S('calendar', <PlanCalendar />)} />
         <Route path="/studio/scorecards" element={S('scorecards', <Scorecards />)} />

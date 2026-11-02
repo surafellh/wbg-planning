@@ -27,7 +27,12 @@ export function weekStart(d: Date) { const x = new Date(Date.UTC(d.getUTCFullYea
 export function weekNo(fy: string, ws: Date) { const m = monthOf(fy, new Date(ws.getTime() + 3 * 864e5)); const s = weekStart(monthStart(fy, m)); return Math.floor((ws.getTime() - s.getTime()) / (7 * 864e5)) + 1; }
 export function weekLabel(ws: Date) { const m = monthOf(FY, new Date(ws.getTime() + 3 * 864e5)); return `${MONTHS[m - 1]} W${weekNo(FY, ws)}`; }
 /** Weekly cut-off: Saturday 2:00 PM (East Africa time) after the week ends. */
-export function cutoffOf(ws: Date) { return new Date(ws.getTime() + 7 * 864e5 + 11 * 3600e3); }
+/** Calendar rules (Studio → Configuration → Cycle). Cut-off: day after the week starts (Saturday = 7, i.e. the next Saturday) at an hour in Addis Ababa time (UTC+3). */
+export const CAL = { cutoffDay: 7, cutoffHour: 14, monthClose: 9 };
+export function setCalendar(c: Partial<typeof CAL> | undefined) { if (c) Object.assign(CAL, Object.fromEntries(Object.entries(c).filter(([, v]) => v != null && String(v) !== '').map(([k, v]) => [k, Number(v)]))); }
+const DAYN = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+export function cutoffLabel() { const h = CAL.cutoffHour; return `${DAYN[CAL.cutoffDay % 7]} ${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`; }
+export function cutoffOf(ws: Date) { return new Date(ws.getTime() + CAL.cutoffDay * 864e5 + (CAL.cutoffHour - 3) * 3600e3); }
 export const today = () => new Date();
 export const curMonth = () => { const n = today(); if (n < monthStart(FY, 1)) return 1; if (n >= monthStart(FY, 13)) return 12; return monthOf(FY, n); };
 
@@ -74,6 +79,8 @@ export function lastCheckIn(db: DB, krId: string) { let best: any = null; for (c
 export function unitOfObjective(db: DB, oid: string) { return db.objectives.find(o => o.id === oid)?.unit_id; }
 /** Active key results of an objective (paused and dropped ones are kept but not scored). */
 export function krsOf(db: DB, oid: string, all = false) { return db.key_results.filter(k => k.objective_id === oid && !k.retired_at && (all || (k.state || 'active') === 'active')).sort((a, b) => (a.sort || 0) - (b.sort || 0)); }
+/** A deliverable counts once the manager accepts it — or once delivered, when acceptance is switched off in Studio → Configuration → Approvals. */
+export const isAccepted = (db: DB, d: Row) => d.status === 'accepted' || (d.status === 'done' && db.settings.approvals?.accept_deliverables === false);
 export const liveObj = (o: Row) => o.status !== 'Archived' && (o.state || 'active') === 'active';
 export function childObjectives(db: DB, oid: string) { return db.objectives.filter(o => o.parent_objective_id === oid && liveObj(o)); }
 /** Organisation key results of a unit (unit, department and division objectives — not archived personal ones). */
@@ -146,8 +153,8 @@ export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 
     const cm = curMonth();
     const ds = db.deliverables.filter(d => d.key_result_id === k.id && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
     const due = ds.filter(d => d.month <= cm);
-    target = sum(ds.map(d => Number(d.weight) || 1)); actual = sum(ds.filter(d => d.status === 'accepted').map(d => Number(d.weight) || 1));
-    progress = due.length ? weighted(due.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? 1 : 0])) : null; toDate = true;
+    target = sum(ds.map(d => Number(d.weight) || 1)); actual = sum(ds.filter(d => isAccepted(db, d)).map(d => Number(d.weight) || 1));
+    progress = due.length ? weighted(due.map(d => [Number(d.weight) || 1, isAccepted(db, d) ? 1 : 0])) : null; toDate = true;
   } else if (k.measure === 'plan') {
     const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id);
     if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups) : null; const t2 = done.length ? planBy(db, u, l.section, done, l.line_groups, false, l.metric) : null; progress = ratioFor(k, actual, t2); toDate = true; }
@@ -180,9 +187,12 @@ export function objScore(db: DB, o: Row, p: Period = currentPeriod('Q'), depth =
   const own = ks.length ? weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress])) : null;
   const below = kids.length ? weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)])) : null;
   // An objective with both its own key results and objectives below blends them by its "own share" (default 50%).
-  if (own != null && below != null) { const w = o.own_weight != null ? Number(o.own_weight) / 100 : 0.5; v = w * own + (1 - w) * below; } else v = own ?? below;
+  if (own != null && below != null) { const w = ownShare(db, o) / 100; v = w * own + (1 - w) * below; } else v = own ?? below;
   db.cache.set(ck, v); return v;
 }
+/** Share (%) of an objective's score taken from its own key results when it also has objectives below it.
+    Set per objective by its owner; until set, the default for its level from Studio → Configuration → Scoring. */
+export function ownShare(db: DB, o: Row) { if (o.own_weight != null && o.own_weight !== '') return Number(o.own_weight); const d = db.settings.own_share || {}; return Number(d[o.level] ?? d.default ?? 50); }
 export function objState(db: DB, o: Row, p: Period = currentPeriod('Q')) { const ks = krsOf(db, o.id); const toDate = ks.length > 0 && ks.every(k => k.measure !== 'manual'); return statusFor(db, objScore(db, o, p), null, elapsed(p), toDate); }
 /** Organisation score = average of its own objectives; a level with none takes the level above. */
 export function orgScore(db: DB, orgId: string | null | undefined, p: Period = currentPeriod('Q'), depth = 0): number | null {
@@ -203,7 +213,7 @@ export function delivScore(db: DB, posIds: Set<string>, p: Period) {
   const ms = periodMonths(p), cm = curMonth();
   const ds = db.deliverables.filter(d => posIds.has(d.owner_position_id) && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
   const due = ds.filter(d => d.month <= cm);
-  return { total: ds.length, due: due.length, accepted: ds.filter(d => d.status === 'accepted').length, done: ds.filter(d => d.status === 'done').length, score: due.length ? weighted(due.map(d => [Number(d.weight) || 1, d.status === 'accepted' ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0])) : null };
+  return { total: ds.length, due: due.length, accepted: ds.filter(d => isAccepted(db, d)).length, done: ds.filter(d => d.status === 'done' && !isAccepted(db, d)).length, score: due.length ? weighted(due.map(d => [Number(d.weight) || 1, isAccepted(db, d) ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0])) : null };
 }
 /** The agreed scorecard for the quarter a period falls in (if any). */
 export function scorecardFor(db: DB, posId: string, p: Period) {
@@ -211,27 +221,48 @@ export function scorecardFor(db: DB, posId: string, p: Period) {
   return db.scorecards.find(s => s.position_id === posId && s.quarter === q && s.status === 'Agreed') || null;
 }
 /** Person result R = s·S_org + (1−s)·personal, for the period. Personal part: agreed scorecard → deliverables → own objectives and key results. */
+/** How a person's result is built, per level (Studio → Configuration → Scoring).
+    source: 'led' = the organisation the position heads (unit head → unit, department head → department, division head → division);
+    'own' = the department or division the person sits in; 'unit' = the whole business unit; 'none' = personal work only. */
+export function resultRule(db: DB, level: string): { share: number; source: 'led' | 'own' | 'unit' | 'none' } {
+  const rr = db.settings.result_rules || {}; const lv = level === 'group' ? 'unit' : level;
+  const def = { unit: { share: 70, source: 'led' }, department: { share: 60, source: 'led' }, division: { share: 50, source: 'led' }, employee: { share: 30, source: 'own' } } as any;
+  const legacy = db.settings.org_weights?.[lv]; const r = { ...(def[lv] || def.employee), ...(legacy != null ? { share: Number(legacy) } : {}), ...(rr[lv] || {}) };
+  return { share: Number(r.share), source: r.source };
+}
+const LEVEL_WORD: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
+/** The organisation part of a person's result: which organisation, its score and a label for it. */
+export function orgPartOf(db: DB, pos: Row, p: Period) {
+  const rule = resultRule(db, pos.level); const org = byIdC(db.org_units, pos.org_unit_id);
+  if (rule.source === 'none' || !org) return { rule, orgId: null as string | null, score: null as number | null, label: 'Personal work only' };
+  if (rule.source === 'unit') { const u = byIdC(db.org_units, pos.unit_id) || org; return { rule, orgId: u.id, score: orgScore(db, u.id, p), label: `Unit performance · ${u.name}` }; }
+  if (rule.source === 'led' && pos.level !== 'employee') return { rule, orgId: org.id, score: orgScoreOwn(db, org.id, p), label: `${LEVEL_WORD[org.kind] || 'Organisation'} performance · ${org.name}` };
+  return { rule, orgId: org.id, score: orgScore(db, org.id, p), label: `${LEVEL_WORD[org.kind] || 'Organisation'} performance · ${org.name}` };
+}
+const byIdC = (rows: Row[], id: any) => rows.find(r => r.id === id);
+/** Person result R = share × organisation part + (1 − share) × personal part, for the period.
+    Organisation part: the organisation the person leads (heads) or sits in, per the level's rule. Personal part: agreed scorecard → deliverables → key results owned. */
 export function personResult(db: DB, pos: Row, p: Period = currentPeriod('Q')) {
-  const s = orgShare(db, pos.level); const org = orgScore(db, pos.org_unit_id, p);
-  if (pos.status === 'Vacant') return { s, org, personal: null as number | null, R: null as number | null, basis: 'Vacant position', hr: null as number | null };
+  const op = orgPartOf(db, pos, p); const s = op.rule.source === 'none' ? 0 : op.rule.share / 100; const org = op.score;
+  if (pos.status === 'Vacant') return { s, org, personal: null as number | null, R: null as number | null, basis: 'Vacant position', hr: null as number | null, orgLabel: op.label };
   let personal: number | null = null, basis = '';
   const sc = scorecardFor(db, pos.id, p);
   if (sc) {
     const items = db.scorecard_items.filter(i => i.scorecard_id === sc.id);
     personal = weighted(items.map(i => { const w = Number(i.weight) || 1; if (i.item_type === 'kr') { const k = db.key_results.find(x => x.id === i.item_id); return [w, k ? krState(db, k, p).progress : null]; }
-      const d = db.deliverables.find(x => x.id === i.item_id); if (!d || (p.t === 'M' && d.month !== p.n) || d.month > curMonth()) return [w, null]; return [w, d.status === 'accepted' ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0]; }));
+      const d = db.deliverables.find(x => x.id === i.item_id); if (!d || (p.t === 'M' && d.month !== p.n) || d.month > curMonth()) return [w, null]; return [w, isAccepted(db, d) ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0]; }));
     basis = `Agreed scorecard · ${items.length} items`;
   }
   if (personal == null) { const d = delivScore(db, new Set([pos.id]), p); personal = d.score; if (d.total) basis = `${d.accepted}/${d.due} due deliverables accepted`; }
   if (personal == null) {
-    const own = db.objectives.filter(o => o.owner_position_id === pos.id && o.level === 'individual');
-    const ks = db.key_results.filter(k => k.owner_position_id === pos.id && !own.some(o => o.id === k.objective_id));
+    const own = db.objectives.filter(o => o.owner_position_id === pos.id && o.level === 'individual' && o.status !== 'Archived');
+    const ks = db.key_results.filter(k => k.owner_position_id === pos.id && (k.state || 'active') === 'active' && !own.some(o => o.id === k.objective_id) && db.objectives.some(o => o.id === k.objective_id && o.status !== 'Archived'));
     const items: [number, number | null][] = [...own.map(o => [1, objScore(db, o, p)] as [number, number | null]), ...ks.map(k => [Number(k.weight) || 1, krState(db, k, p).progress] as [number, number | null])];
-    if (items.length) { personal = weighted(items); basis = `${own.length} personal objectives · ${ks.length} key results owned`; }
+    if (items.length) { personal = weighted(items); basis = `${ks.length} key results owned`; }
   }
   if (!basis) basis = 'No personal items yet';
-  const R = org == null && personal == null ? null : s * (org ?? 0) + (1 - s) * (personal ?? org ?? 0);
-  return { s, org, personal, R, basis, hr: R == null ? null : R * Number(db.settings.hr_scale?.max ?? 70) };
+  const R = org == null && personal == null ? null : org == null ? personal : personal == null ? org : s * org + (1 - s) * personal;
+  return { s, org, personal, R, basis, hr: R == null ? null : R * Number(db.settings.hr_scale?.max ?? 70), orgLabel: op.label };
 }
 
 // ---------------- work ----------------

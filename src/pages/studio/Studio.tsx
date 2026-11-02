@@ -1,14 +1,14 @@
 /* STUDIO WINDOW — advanced, editable views: process monitor, strategy builder, scorecards, framework & rules, audit. */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useData, useSave, useTerms, byId, posName, ROLE_NAME, FRAMEWORKS, STUDIO_ITEMS, STUDIO_LABELS, type DB, type Row } from '../../lib/data';
+import { useData, useSave, useTerms, byId, posName, ROLE_NAME, FRAMEWORKS, STUDIO_ITEMS, STUDIO_LABELS, WORK_PAGES, CAPS, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
-import { krsOf, krState, currentPeriod, subtreeIds, weekStart, ymd, workStats, delivScore, lastActualMonth, MONTHS, qOfMonth, curMonth, pct, fmt, krTarget } from '../../lib/calc';
+import { krsOf, krState, currentPeriod, subtreeIds, weekStart, ymd, workStats, delivScore, lastActualMonth, MONTHS, qOfMonth, curMonth, pct, fmt, krTarget, cutoffLabel } from '../../lib/calc';
 import { Page, Cmd, Pill, Modal, Empty, Seg, NumIn, Bar, UnitPicker } from '../../lib/ui';
 import { planStatus } from '../OkrPlan';
 import { openRescope } from '../AnnualPlan';
 import { proposeScorecard, ScorecardEditor } from '../work/Inbox';
-import { SettingsRules } from '../Settings';
+import { SettingsRules, ScoringRules } from '../Settings';
 
 /* ---------- Process monitor (planning cycle and system health, like a submission monitor) ---------- */
 type Cell = { v: string; tone: 'good' | 'warn' | 'bad' | 'none'; tip?: string };
@@ -124,30 +124,65 @@ export function Scorecards() {
 
 /* ---------- Framework, windows and rules ---------- */
 export function Framework() {
-  const { db, can, user } = useData(); const save = useSave(); if (!db) return null;
+  const { db, can, user } = useData(); const save = useSave(); const [tab, setTab] = useState(() => new URLSearchParams(location.search).get('tab') || 'framework'); if (!db) return null;
   const f = db.settings.framework || { type: 'okr', labels: {} }; const w = db.settings.windows || {}; const req = db.settings.framework_request || {};
   const items = { ...STUDIO_ITEMS, ...(db.settings.studio_items || {}) } as Record<string, string[]>; const wr = db.settings.work_rules || {}; const tax = db.settings.tax_rate || { rate: 30 };
+  const cal = db.settings.calendar || {}; const cur = db.settings.current || {}; const ap = db.settings.approvals || {}; const nt = db.settings.notify || {}; const mods = db.settings.modules || {}; const wp = db.settings.work_pages || {}; const ae = db.settings.actuals_entry || {};
   const put = (key: string, value: any, msg = 'Saved') => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], msg);
   const base = (FRAMEWORKS[f.type] || FRAMEWORKS.okr).labels; const roles = Object.keys(ROLE_NAME).filter(r => r !== 'none');
   const toggle = (win: string, r: string) => { const cur: string[] = w[win] || []; put('windows', { ...w, [win]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
   const toggleItem = (k: string, r: string) => { const cur = items[k] || []; put('studio_items', { ...items, [k]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
-  const yearStart = curMonth() === 1; // the framework is chosen at the start of the fiscal year
-  return <><Page title="Framework & rules" desc="The planning framework and its words, who opens which window and page, work rules, and the scoring rules.">
-    <div className="card stack"><h2>Planning framework</h2>
+  const toggleWork = (k: string, r: string) => { const cur: string[] = wp[k] || roles; put('work_pages', { ...wp, [k]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
+  const aeRoles: string[] = ae.roles || ['super_admin', 'group_strategy', 'finance', 'planning_head', 'unit_head'];
+  const yearStart = curMonth() === 1;
+  const Mx = ({ rows, has, on }: { rows: [string, string][]; has: (k: string, r: string) => boolean; on: (k: string, r: string) => void }) => <div className="tw"><table className="t"><thead><tr><th />{roles.map(r => <th key={r} style={{ fontSize: 11 }}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{rows.map(([k, l]) => <tr key={k}><td><b>{l}</b></td>{roles.map(r => <td key={r} style={{ textAlign: 'center' }}><input type="checkbox" checked={has(k, r)} onChange={() => on(k, r)} disabled={r === 'super_admin' && (k === 'studio_admin')} /></td>)}</tr>)}</tbody></table></div>;
+  const Sw = ({ label, on, set, tip }: { label: string; on: boolean; set: (v: boolean) => void; tip?: string }) => <label className="row" style={{ gap: 8 }} data-tip={tip}><input type="checkbox" checked={on} onChange={e => set(e.target.checked)} />{label}</label>;
+  const TABS: [string, string][] = [['framework', 'Framework & terms'], ['scoring', 'Scoring'], ['cycle', 'Cycle & work rules'], ['access', 'Access'], ['approvals', 'Approvals & notifications'], ['modules', 'Modules']];
+  return <Page title="Configuration" desc="Everything that shapes how planning and performance work: the framework, scoring, the cycle, who can do what, approvals, notifications and optional modules." help={<p>Changes apply straight away for everyone. Every change is in the audit log and can be undone there.</p>}>
+    <div className="tabs" role="tablist">{TABS.map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
+    {tab === 'framework' && <div className="card stack"><h2>Planning framework</h2>
       <div className="g3">{Object.entries(FRAMEWORKS).map(([k, F]) => <button key={k} className={'kind' + (f.type === k ? ' on' : '')} disabled={f.type === k} onClick={() => { if (yearStart && can('finalApprove')) put('framework', { type: k, labels: {} }); else put('framework_request', { type: k, by: user.id, at: new Date().toISOString(), status: 'Pending' }, 'Change requested — top management must approve; it takes effect at the start of the next fiscal year'); }}><b>{F.name}</b><small>{Object.values(F.labels).slice(0, 4).join(' → ')}</small></button>)}</div>
       {req.status === 'Pending' && <div className="banner warn">Requested change to <b>{FRAMEWORKS[req.type]?.name}</b> on {String(req.at).slice(0, 10)} — waiting for top management.{can('finalApprove') && <> <button className="btn sm pri" onClick={async () => { await put('framework_request', { ...req, status: 'Approved', approved_at: new Date().toISOString() }); if (yearStart) await put('framework', { type: req.type, labels: {} }); }}>Approve</button> <button className="btn sm" onClick={() => put('framework_request', { ...req, status: 'Rejected' })}>Reject</button></>}</div>}
       {req.status === 'Approved' && !yearStart && <div className="banner">Approved: switches to {FRAMEWORKS[req.type]?.name} at the start of the next fiscal year.</div>}
-      <p className="note">The framework can only change at the start of a fiscal year, with top management approval, so a year is planned and scored one way. Renaming terms below is allowed any time.</p>
-      <div className="g3">{Object.keys(base).map(k => <label key={k} className="f">{k.replace('_', ' ')}<input type="text" defaultValue={(f.labels || {})[k] || base[k]} onBlur={e => { const v = e.target.value.trim(); if (v && v !== ((f.labels || {})[k] || base[k])) put('framework', { ...f, labels: { ...(f.labels || {}), [k]: v } }); }} /></label>)}</div></div>
-    <div className="card"><h2>Who opens which window</h2><p className="note">Everyone has the Work window. Insights gives the full picture; Studio is the advanced, editable view; Studio admin adds framework, people, import, backup and audit.</p>
-      <div className="tw"><table className="t"><thead><tr><th>Window</th>{roles.map(r => <th key={r}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{[['insights', 'Insights'], ['studio', 'Studio'], ['studio_admin', 'Studio admin']].map(([k, l]) => <tr key={k}><td><b>{l}</b></td>{roles.map(r => <td key={r}><input type="checkbox" checked={(w[k] || []).includes(r)} onChange={() => toggle(k, r)} disabled={k === 'studio_admin' && r === 'super_admin'} /></td>)}</tr>)}</tbody></table></div></div>
-    <div className="card"><h2>Studio pages by role</h2><p className="note">Leaders only see their own unit's data. Changes to an approved plan by anyone other than Group Strategy go through a rescope for approval.</p>
-      <div className="tw"><table className="t"><thead><tr><th>Page</th>{roles.map(r => <th key={r}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{Object.keys(STUDIO_ITEMS).map(k => <tr key={k}><td><b>{STUDIO_LABELS[k]}</b></td>{roles.map(r => <td key={r}><input type="checkbox" checked={(items[k] || []).includes(r)} onChange={() => toggleItem(k, r)} /></td>)}</tr>)}</tbody></table></div></div>
-    <div className="card stack"><h2>Work rules</h2><div className="g3">
-      <label className="f">Who plans weekly activities<select value={wr.activities || 'both'} onChange={e => put('work_rules', { ...wr, activities: e.target.value })}><option value="members">Team members plan their own</option><option value="managers">Managers plan for their team</option><option value="both">Both</option></select></label>
-      <label className="f">Monthly deliverables can be changed<select value={wr.deliverable_lock || 'month_start'} onChange={e => put('work_rules', { ...wr, deliverable_lock: e.target.value })}><option value="month_start">Until the month starts (heads any time)</option><option value="open">Any time</option></select></label>
-      <label className="f">Profit tax rate for the income statement (%)<NumIn value={tax.rate} onChange={v => v != null && put('tax_rate', { ...tax, rate: v })} /></label></div></div>
-  </Page><SettingsRules /></>;
+      <p className="note">The framework can only change at the start of a fiscal year, with top management approval, so a year is planned and scored one way. Renaming the terms below is allowed any time.</p>
+      <div className="g3">{Object.keys(base).map(k => <label key={k} className="f">{k.replace('_', ' ')}<input type="text" defaultValue={(f.labels || {})[k] || base[k]} onBlur={e => { const v = e.target.value.trim(); if (v && v !== ((f.labels || {})[k] || base[k])) put('framework', { ...f, labels: { ...(f.labels || {}), [k]: v } }); }} /></label>)}</div></div>}
+    {tab === 'scoring' && <><ScoringRules /><SettingsRules /></>}
+    {tab === 'cycle' && <><div className="card stack"><h2>Calendar</h2><div className="g4">
+        <label className="f">Current quarter<select value={cur.quarter} onChange={e => put('current', { ...cur, quarter: Number(e.target.value) })}>{[1, 2, 3, 4].map(q => <option key={q} value={q}>Q{q}</option>)}</select></label>
+        <label className="f" data-tip="Weeks run Saturday to Friday. The cut-off is the deadline to update the week.">Weekly cut-off day<select value={cal.cutoffDay ?? 7} onChange={e => put('calendar', { ...cal, cutoffDay: Number(e.target.value) })}>{[[5, 'Thursday'], [6, 'Friday'], [7, 'Saturday (after the week)'], [8, 'Sunday'], [9, 'Monday']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+        <label className="f">Cut-off hour (0–23)<NumIn value={cal.cutoffHour ?? 14} onChange={v => v != null && v >= 0 && v <= 23 && put('calendar', { ...cal, cutoffHour: v })} /></label>
+        <label className="f">Month closes on day<NumIn value={cal.monthClose ?? 9} onChange={v => v != null && v >= 1 && v <= 28 && put('calendar', { ...cal, monthClose: v })} /></label></div>
+        <p className="note">Fiscal year starts 8 July; months start on the Ethiopian month; weeks run Saturday–Friday. Current cut-off: <b>{cutoffLabel()}</b>.</p></div>
+      <div className="card stack"><h2>Work rules</h2><div className="g3">
+        <label className="f">Who plans weekly activities<select value={wr.activities || 'both'} onChange={e => put('work_rules', { ...wr, activities: e.target.value })}><option value="members">Team members plan their own</option><option value="managers">Managers plan for their team</option><option value="both">Both</option></select></label>
+        <label className="f">Monthly deliverables can be changed<select value={wr.deliverable_lock || 'month_start'} onChange={e => put('work_rules', { ...wr, deliverable_lock: e.target.value })}><option value="month_start">Until the month starts (heads any time)</option><option value="open">Any time</option></select></label>
+        <label className="f">A person's deliverable weights in a month<select value={wr.weights || 'warn'} onChange={e => put('work_rules', { ...wr, weights: e.target.value })}><option value="warn">Warn when not 100%</option><option value="block">Must be 100% to save</option><option value="off">No check</option></select></label>
+        <label className="f">Team members may propose deliverables<select value={wr.propose === false ? 'no' : 'yes'} onChange={e => put('work_rules', { ...wr, propose: e.target.value === 'yes' })}><option value="yes">Yes — the manager confirms</option><option value="no">No — managers plan them</option></select></label>
+        <label className="f">Top priorities per week (★)<NumIn value={wr.top_max ?? 3} onChange={v => v != null && put('work_rules', { ...wr, top_max: v })} /></label>
+        <label className="f">Profit tax rate for the income statement (%)<NumIn value={tax.rate} onChange={v => v != null && put('tax_rate', { ...tax, rate: v })} /></label></div></div></>}
+    {tab === 'access' && <><div className="card"><h2>Windows</h2><p className="note">Everyone has the Work window. Insights is the full picture for leaders; Studio is where plans are built; Studio admin adds configuration, people, import, backup and audit.</p>
+        <Mx rows={[['insights', 'Insights'], ['studio', 'Studio'], ['studio_admin', 'Studio admin']]} has={(k, r) => (w[k] || []).includes(r)} on={toggle} /></div>
+      <div className="card"><h2>Work pages</h2><p className="note">Turn a Work page off for a role to keep their window simpler. Today is always on.</p>
+        <Mx rows={Object.entries(WORK_PAGES)} has={(k, r) => !wp[k] || (wp[k] as string[]).includes(r)} on={toggleWork} /></div>
+      <div className="card"><h2>Studio pages</h2><p className="note">Leaders only see their own unit's data. Changes to an approved plan by anyone other than Group Strategy go through a change request.</p>
+        <Mx rows={Object.keys(STUDIO_ITEMS).map(k => [k, STUDIO_LABELS[k]] as [string, string])} has={(k, r) => (items[k] || []).includes(r)} on={toggleItem} /></div>
+      <div className="card stack"><h2>Who enters financial actuals</h2><p className="note">By role, plus everyone in the organisations you pick (for example the Finance department's team members). They get Work → Record → Financial actuals.</p>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>{roles.map(r => <Sw key={r} label={ROLE_NAME[r as keyof typeof ROLE_NAME]} on={aeRoles.includes(r)} set={v => put('actuals_entry', { ...ae, roles: v ? [...aeRoles, r] : aeRoles.filter(x => x !== r) })} />)}</div>
+        <label className="f" style={{ maxWidth: 520 }}>Add an organisation<select value="" onChange={e => e.target.value && put('actuals_entry', { ...ae, org_unit_ids: Array.from(new Set([...(ae.org_unit_ids || []), e.target.value])) })}><option value="">Choose…</option>{db.org_units.filter(o => o.kind !== 'group').sort((a, b) => a.name.localeCompare(b.name)).map(o => <option key={o.id} value={o.id}>{o.name} · {byId(db.org_units, o.unit_id)?.name}</option>)}</select></label>
+        <div className="row" style={{ flexWrap: 'wrap' }}>{(ae.org_unit_ids || []).map((id: string) => <Pill key={id}>{byId(db.org_units, id)?.name} <button className="linkbtn" onClick={() => put('actuals_entry', { ...ae, org_unit_ids: (ae.org_unit_ids || []).filter((x: string) => x !== id) })}>×</button></Pill>)}</div></div>
+      <div className="card"><h2>What each role can do (database rules)</h2><div className="tw"><table className="t"><thead><tr><th>Can</th>{roles.map(r => <th key={r} style={{ fontSize: 11 }}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>
+        {Object.entries({ seeGroup: 'See every unit', editOKR: 'Edit OKRs', editPlan: 'Edit the annual plan', approve: 'Approve plans', finalApprove: 'Final approval', managePeople: 'Accept deliverables', reports: 'See reports', settings: 'Change configuration' }).map(([k, l]) => <tr key={k}><td>{l}</td>{roles.map(r => <td key={r} style={{ textAlign: 'center' }}>{CAPS[k].includes(r as any) ? '✓' : ''}</td>)}</tr>)}
+      </tbody></table></div><p className="note">These are enforced by the database. Pages and windows above decide what each role sees; the database decides what they can save.</p></div></>}
+    {tab === 'approvals' && <><div className="card stack"><h2>Approvals</h2>
+        <Sw label="Target changes after the OKR plan is approved go to Group Strategy for approval" on={ap.target_changes !== false} set={v => put('approvals', { ...ap, target_changes: v })} />
+        <Sw label="Deliverables count only once the manager accepts them" on={ap.accept_deliverables !== false} set={v => put('approvals', { ...ap, accept_deliverables: v })} tip="Off: a deliverable counts as soon as the owner marks it delivered." />
+        <Sw label="Quarter scorecards must be agreed by the person" on={ap.scorecard_agree !== false} set={v => put('approvals', { ...ap, scorecard_agree: v })} />
+        <Sw label="Changes to the approved annual plan go through a rescope" on={ap.rescope !== false} set={v => put('approvals', { ...ap, rescope: v })} /></div>
+      <div className="card stack"><h2>Notifications</h2><p className="note">Who gets told what. Turning one off stops that notification for everyone.</p><div className="g3">
+        {Object.entries({ blocker: 'Stuck activity → manager and helping unit', deliverable: 'Deliverable delivered / proposed → manager', week: 'Week summary or month plan submitted → manager', feedback: 'Manager feedback → person', scorecard: 'Scorecard ready / agreed / discuss', okr: 'Objective approved or returned', replan: 'ERP replan requests', message: 'Direct messages' }).map(([k, l]) => <Sw key={k} label={l} on={nt[k] !== false} set={v => put('notify', { ...nt, [k]: v })} />)}</div></div></>}
+    {tab === 'modules' && <div className="card stack"><h2>Optional modules</h2><p className="note">Modules add department-specific features. Turning one off hides it everywhere; its data is kept.</p>
+      {[['projects', 'Project portfolio (PMO)', 'Studio → Project portfolio for PMO; Insights → Projects for leaders.'], ['weekly_cash', 'Weekly cash flow', 'Record → Financial actuals → weekly cash; Reports → Weekly cash.'], ['erp_replan', 'ERP OKR replan', 'Replan campaign for deliverables brought over from personal ERP OKRs.'], ['messages', 'Messages', 'Direct messages in the Inbox.']].map(([k, l, d]) => <div key={k} className="row" style={{ gap: 10 }}><Sw label={l} on={mods[k]?.enabled !== false} set={v => put('modules', { ...mods, [k]: { ...(mods[k] || {}), enabled: v } })} /><span className="mini">{d}</span></div>)}</div>}
+  </Page>;
 }
 
 /* ---------- Audit log ---------- */

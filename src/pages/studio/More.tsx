@@ -166,3 +166,44 @@ export function Backup() {
       <div className="card stack"><h2>Restore</h2><input type="file" accept=".json" disabled={busy} onChange={e => e.target.files?.[0] && restore(e.target.files[0])} />{busy && <p>Restoring… keep this page open.</p>}{log.map((l, i) => <div key={i} className="mini">{l}</div>)}</div></div>
   </Page>;
 }
+
+/* ---------- ERP personal OKRs: replanning campaign ---------- */
+export function ErpReplan() {
+  const { db, user, can, unit } = useData(); const save = useSave(); const [q, setQ] = useState(''); const [show, setShow] = useState<string | null>(null);
+  if (!db) return null;
+  const st = db.settings.erp_replan || {};
+  const erpD = db.deliverables.filter(d => (d.source === 'erp' || d.source === 'erp_reviewed') && (can('seeGroup') || d.unit_id === unit));
+  const orgs = Array.from(new Set(erpD.map(d => byId(db.positions, d.owner_position_id)?.org_unit_id).filter(Boolean))) as string[];
+  const headOf = (orgId: string) => db.positions.find(p => p.org_unit_id === orgId && p.level !== 'employee');
+  const rows = orgs.map(o => { const ds = erpD.filter(d => byId(db.positions, d.owner_position_id)?.org_unit_id === o); const org = byId(db.org_units, o);
+    return { o, org, unit: byId(db.org_units, org?.unit_id)?.name, head: headOf(o), todo: ds.filter(d => d.source === 'erp' && d.status !== 'removed').length, done: ds.filter(d => d.source === 'erp_reviewed' && d.status !== 'removed').length, removed: ds.filter(d => d.status === 'removed').length, total: ds.length }; })
+    .filter(r => !q || (r.org?.name + ' ' + r.unit).toLowerCase().includes(q.toLowerCase())).sort((a, b) => b.todo - a.todo);
+  const archived = db.objectives.filter(o => o.level === 'individual' && o.status === 'Archived' && (can('seeGroup') || o.unit_id === unit));
+  const tot = { todo: sum(rows.map(r => r.todo)), done: sum(rows.map(r => r.done)), removed: sum(rows.map(r => r.removed)) };
+  async function ask(targets: typeof rows) {
+    const heads = targets.filter(r => r.todo && r.head).map(r => r.head!.id);
+    const { notifyPositions } = await import('../../lib/data');
+    await notifyPositions(db!, heads, 'replan', `Please replan your team's deliverables from the ERP personal OKRs${st.deadline ? ' by ' + st.deadline : ''}`, '/plan?tab=deliverables', 'Link each one to a key result, set the month, owner and weight — or remove it.');
+    await save(() => sb.from('app_settings').upsert({ key: 'erp_replan', value: { ...st, requested_at: new Date().toISOString(), requested_by: user.id } }), ['app_settings'], `Replan request sent to ${heads.length} head(s)`);
+  }
+  return <Page title="ERP OKR replan" desc="Personal OKRs from the ERP were kept as deliverables under their department objectives so no work was lost. Heads now replan them properly." help={<>
+    <p><b>What happened:</b> each personal ERP objective became a deliverable (with its original text in "Original ERP OKR") under the department objective it served, and the personal objective was archived — nothing was deleted.</p>
+    <p><b>What heads do:</b> in Work → Plan → Deliverables, each one shows "⚑ replan". They link it to the right key result, set the month, owner and weight, or delete it. Saving marks it replanned. "Keep all shown as they are" accepts them unchanged.</p>
+    <p><b>What you do here:</b> set a deadline, send the request, and follow progress by department.</p></>}>
+    <div className="kpis"><div className={'tile ' + (tot.todo ? 'warn' : 'good')}><div className="tv">{tot.todo}</div><div className="tl">Still to replan</div></div><div className="tile good"><div className="tv">{tot.done}</div><div className="tl">Replanned</div></div><div className="tile"><div className="tv">{tot.removed}</div><div className="tl">Removed by heads</div></div><div className="tile"><div className="tv">{archived.length}</div><div className="tl">Archived personal objectives</div></div></div>
+    <div className="card row" style={{ gap: 10 }}><label className="f" style={{ maxWidth: 220 }}>Deadline<input type="date" value={st.deadline || ''} onChange={e => save(() => sb.from('app_settings').upsert({ key: 'erp_replan', value: { ...st, deadline: e.target.value } }), ['app_settings'], 'Deadline saved')} /></label>
+      <span className="note" style={{ flex: 1 }}>{st.requested_at ? `Last request sent ${String(st.requested_at).slice(0, 10)}.` : 'No request sent yet.'}</span><button className="btn pri" disabled={!tot.todo} onClick={() => ask(rows)}>Ask all heads with items left to replan</button></div>
+    <Cmd right={<input type="text" placeholder="Find a department or unit" value={q} onChange={e => setQ(e.target.value)} />} />
+    <div className="tw"><table className="t"><thead><tr><th>Organisation</th><th>Head</th><th className="n">To replan</th><th className="n">Replanned</th><th className="n">Removed</th><th>Progress</th><th /></tr></thead><tbody>
+      {rows.map(r => <tr key={r.o}><td><b>{r.org?.name}</b><div className="mini">{r.unit}</div></td><td>{r.head?.holder_name || <span className="note">vacant</span>}</td><td className="n">{r.todo}</td><td className="n">{r.done}</td><td className="n">{r.removed}</td><td>{pct(r.total ? (r.done + r.removed) / r.total : null)}</td>
+        <td><div className="row" style={{ flexWrap: 'nowrap' }}><button className="btn sm" onClick={() => setShow(show === r.o ? null : r.o)}>{show === r.o ? 'Hide' : 'Items'}</button>{r.todo > 0 && r.head && <button className="btn sm" onClick={() => ask([r])}>Remind</button>}</div></td></tr>)}
+    </tbody></table></div>
+    {show && <div className="card" style={{ marginTop: 10 }}><h3>{byId(db.org_units, show)?.name}</h3><div className="tw"><table className="t"><thead><tr><th>Deliverable</th><th>Original ERP OKR</th><th>Owner</th><th>Key result</th><th>State</th></tr></thead><tbody>
+      {erpD.filter(d => byId(db.positions, d.owner_position_id)?.org_unit_id === show).map(d => <tr key={d.id}><td>{d.title}</td><td className="mini">{String(d.note || '').replace('From ERP personal OKR: ', '')}</td><td>{byId(db.positions, d.owner_position_id)?.holder_name}</td><td className="mini">{byId(db.key_results, d.key_result_id)?.title || '— not linked'}</td><td><Pill tone={d.status === 'removed' ? 'none' : d.source === 'erp' ? 'warn' : 'good'}>{d.status === 'removed' ? 'removed' : d.source === 'erp' ? 'to replan' : 'replanned'}</Pill></td></tr>)}
+    </tbody></table></div></div>}
+    <details className="card" style={{ marginTop: 12 }}><summary><b>Archived personal objectives ({archived.length})</b> — the originals, kept for reference</summary>
+      <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Objective</th><th>Owner</th><th>Organisation</th><th>Key results</th></tr></thead><tbody>
+        {archived.slice(0, 300).map(o => <tr key={o.id}><td>{o.text}</td><td>{byId(db.positions, o.owner_position_id)?.holder_name}</td><td className="mini">{byId(db.org_units, o.org_unit_id)?.name}</td><td className="mini">{db.key_results.filter(k => k.objective_id === o.id).map(k => k.title).join(' · ')}</td></tr>)}
+      </tbody></table></div></details>
+  </Page>;
+}

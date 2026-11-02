@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, byId, ROLE_NAME, type DB, type Row } from '../lib/data';
-import { orgScore, orgScoreOwn, personResult, bandOf, pct, fmt, orgShare, objScore, objState, krsOf, krState, delivScore, subtreeIds, periodLabel, MONTHS, curMonth, workStats, weekStart, ymd, type Period } from '../lib/calc';
+import { orgScore, orgScoreOwn, personResult, bandOf, pct, fmt, resultRule, objScore, objState, krsOf, krState, delivScore, subtreeIds, periodLabel, MONTHS, curMonth, workStats, weekStart, ymd, type Period } from '../lib/calc';
 import { Page, Cmd, Ring, Bar, Pill, Empty, Drawer, PeriodPicker, usePeriod, LineChart, StatusStack, StatePill } from '../lib/ui';
 import { statusCounts, KrDrawer } from './Goals';
 
-const PERF_HELP = (db: DB) => { const w = db.settings.org_weights || {}; return <>
+const PERF_HELP = (db: DB) => { const w: Record<string, number> = Object.fromEntries(['unit', 'department', 'division', 'employee'].map(l => [l, resultRule(db, l).share])); return <>
   <h3>Organisation first</h3><p>Every unit, department and division gets a score: the average of its own objectives, each scored against the <b>target for the period you choose</b> (month, quarter, half or year — not the annual total). A level with no objectives of its own takes the score of the level above.</p>
   <h3>A person's result</h3><p>Result = organisation share × the score of the organisation they lead or sit in + (1 − share) × their personal part.</p>
-  <ul><li>Organisation share: unit head {w.unit}% · department head {w.department}% · division head {w.division}% · team member {w.employee}%. Change these in Settings → Rules.</li>
+  <ul><li>Organisation share: unit head {w.unit}% · department head {w.department}% · division head {w.division}% · team member {w.employee}%. A leader's organisation part is the organisation they lead; a team member's is their department or division. Change these in Studio → Configuration → Scoring.</li>
     <li>Personal part: deliverables due in the period, weighted, counted when accepted (quality rating adjusts the credit). Leaders with no deliverables are measured on the key results they own.</li>
     <li>Monthly view: mostly deliverables — they are planned and accepted month by month.</li></ul>
   <h3>Bands and HR</h3><p>Achieved ≥100% · Well performed 75–99% · Partially achieved 40–74% · Under performed below 40%. Shown out of 100% here, sent to HR out of {db.settings.hr_scale?.max ?? 70}%.</p></>; };
@@ -45,8 +45,8 @@ export function PersonDrawer({ pos, p, onClose }: { pos: Row; p: Period; onClose
   return <Drawer title={pos.holder_name || pos.title} onClose={onClose}>
     <div className="note">{pos.title} · {ROLE_NAME[pos.role as keyof typeof ROLE_NAME]} · {org?.name}</div>
     <div className="g3"><div className="tile"><div className="tv">{pct(r.R)}</div><div className="tl">{periodLabel(p)} result</div><div className="ts">{bandOf(r.R, db)} · HR {r.hr == null ? '—' : fmt(r.hr, 1) + '%'}</div></div>
-      <div className="tile"><div className="tv">{pct(r.org)}</div><div className="tl">{org?.name} × {Math.round(r.s * 100)}%</div></div>
-      <div className="tile"><div className="tv">{pct(r.personal)}</div><div className="tl">Personal × {Math.round((1 - r.s) * 100)}%</div><div className="ts">{r.basis}</div></div></div>
+      <div className="tile" data-tip="The organisation part: for a leader, the score of the organisation they lead; for a team member, their department or division. Set per level in Studio → Configuration → Scoring."><div className="tv">{pct(r.org)}</div><div className="tl">{r.orgLabel}</div><div className="ts">counts {Math.round(r.s * 100)}% of the result</div></div>
+      <div className="tile"><div className="tv">{pct(r.personal)}</div><div className="tl">Personal work</div><div className="ts">counts {Math.round((1 - r.s) * 100)}% · {r.basis}</div></div></div>
     <div><h4>Result by month</h4><LineChart labels={MONTHS.slice(0, curMonth())} series={[{ name: 'Result', values: trend.map(v => v == null ? null : v * 100), color: 'var(--accent)' }]} fmtY={v => Math.round(v) + '%'} height={130} /></div>
     <div><h4>Deliverables{ms ? ` · ${MONTHS[p.n - 1]}` : ''}</h4>{dels.length ? <div className="tw"><table className="t"><tbody>{dels.map(d => <tr key={d.id}><td>{MONTHS[d.month - 1]}</td><td>{d.title}</td><td className="n">{d.weight != null ? d.weight + '%' : ''}</td><td><Pill tone={d.status === 'accepted' ? 'good' : d.status === 'returned' ? 'bad' : d.status === 'done' ? 'warn' : 'none'}>{d.status}</Pill>{d.rating ? ' ' + '★'.repeat(d.rating) : ''}</td></tr>)}</tbody></table></div> : <p className="note">No deliverables.</p>}</div>
     {krs.length > 0 && <div><h4>Key results owned</h4>{krs.map(k => { const s = krState(db, k, p); return <div key={k.id} className="lg row click" onClick={() => setKr(k.id)}><span style={{ flex: 1 }}>{k.title}</span><Bar p={s.progress} /><StatePill s={s} /></div>; })}</div>}
@@ -105,8 +105,8 @@ export function PerfPeople({ mine }: { mine?: boolean }) {
   return <Page title="People" desc="Each person's result for the period — click a person for deliverables, key results and trend." help={PERF_HELP(db)}>
     <Cmd right={<><select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">Whole unit</option>{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select><input type="text" placeholder="Find a person" value={q} onChange={e => setQ(e.target.value)} /><PeriodPicker value={p} onChange={setP} /></>} />
     <div className="card" style={{ marginBottom: 12 }}><h4>Bands · {periodLabel(p)}</h4><StatusStack counts={bands} /></div>
-    {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th className="n">Org share</th><th className="n">Org score</th><th className="n">Personal</th><th>Result</th><th>Band</th><th className="n">To HR</th></tr></thead><tbody>
-      {rows.map(({ x, r }) => <tr key={x.id} className="click" onClick={() => setPick(x)}><td><b>{x.holder_name}</b><div className="note">{x.title} · {ROLE_NAME[x.role as keyof typeof ROLE_NAME]}</div></td><td>{byId(db.org_units, x.org_unit_id)?.name}</td><td className="n">{Math.round(orgShare(db, x.level) * 100)}%</td>
+    {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th data-tip="Which organisation's score counts for this person (the one they lead, or the one they sit in) and how much it weighs.">Organisation part</th><th className="n">Score</th><th className="n">Personal</th><th>Result</th><th>Band</th><th className="n">To HR</th></tr></thead><tbody>
+      {rows.map(({ x, r }) => <tr key={x.id} className="click" onClick={() => setPick(x)}><td><b>{x.holder_name}</b><div className="note">{x.title} · {ROLE_NAME[x.role as keyof typeof ROLE_NAME]}</div></td><td>{byId(db.org_units, x.org_unit_id)?.name}</td><td className="mini">{r.orgLabel}<div>weight {Math.round(r.s * 100)}%</div></td>
         <td className="n">{pct(r.org)}</td><td className="n" title={r.basis}>{pct(r.personal)}</td><td><Bar p={r.R} /> {pct(r.R)}</td><td><Pill tone={r.R == null ? 'none' : r.R >= .75 ? 'good' : r.R >= .4 ? 'warn' : 'bad'}>{bandOf(r.R, db)}</Pill></td><td className="n">{r.hr == null ? '—' : fmt(r.hr, 1) + '%'}</td></tr>)}
     </tbody></table></div>}
     {pick && <PersonDrawer pos={pick} p={p} onClose={() => setPick(null)} />}
