@@ -116,7 +116,7 @@ export const STUDIO_ITEMS: Record<string, string[]> = {
   replan: ['super_admin', 'group_strategy', 'unit_head', 'planning_head'],
 };
 export const STUDIO_LABELS: Record<string, string> = { monitor: 'Process monitor', strategy: 'Strategy builder', okr: 'Objective planner', targets: 'Targets & progress', revenue: 'Revenue plan', budget: 'Budget', resources: 'Resources', rescope: 'Rescope & versions', calendar: 'Planning calendar', scorecards: 'Scorecards', projects: 'Project portfolio', replan: 'ERP OKR replan' };
-export const WORK_PAGES: Record<string, string> = { strategy: 'Our strategy', plan: 'Plan', record: 'Record', inbox: 'Inbox', me: 'My performance' };
+export const WORK_PAGES: Record<string, string> = { strategy: 'How we cascade', insights_me: 'My insights', plan: 'Plan', record: 'Record', inbox: 'Inbox', me: 'My performance' };
 /** Optional modules (Studio → Configuration → Modules). */
 export function moduleOn(db: DB | null, k: string) { const m = db?.settings.modules || {}; return m[k]?.enabled !== false; }
 /** Which windows a role can open (configurable in Studio → Framework & rules). */

@@ -19,7 +19,7 @@ import { NewObjective } from './pages/work/MyGoals';
 import { InboxPage, Me, Today } from './pages/work/Inbox';
 import { PlanPage } from './pages/work/Plan';
 import { RecordPage } from './pages/work/Record';
-import { OurStrategy } from './pages/work/Strategy';
+import { OurStrategy, MyInsights } from './pages/work/Strategy';
 import { RescopeEditor, ResourcesMonthly, Portfolio, Backup, ErpReplan } from './pages/studio/More';
 import { Search } from './lib/search';
 import { Overview, Alignment, WhoDoesWhat } from './pages/insights/Insights';
@@ -45,7 +45,7 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       const lead = role !== 'employee'; const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)).filter(x => x.id !== me.id) : []; const ids = new Set(team.map(x => x.id));
       const inbox = db.objectives.filter(o => o.status === 'Submitted' && ids.has(o.owner_position_id)).length + db.deliverables.filter(d => d.status === 'done' && ids.has(d.owner_position_id)).length + db.week_reviews.filter(r => ids.has(r.position_id) && r.submitted_at && !r.feedback_at).length + db.scorecards.filter(s => ids.has(s.position_id) && s.status === 'Discuss').length;
       const unread = db.messages.filter(m => m.to_user === me.user_id && !m.read_at).length;
-      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'Our strategy', icon: I.strategy }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
+      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'How we cascade', icon: I.align }, { k: 'insights_me', to: '/my-insights', label: 'My insights', icon: I.overview }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
         { k: 'inbox', to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { k: 'me', to: '/me', label: 'My performance', icon: I.me }].filter(x => W.work(x.k))];
       return [{ items }];
     }
@@ -119,6 +119,7 @@ function Shell() {
         {/* Work window */}
         <Route path="/today" element={<Today />} />
         <Route path="/strategy" element={ok(W.work('strategy'), <OurStrategy />)} />
+        <Route path="/my-insights" element={ok(W.work('insights_me'), <MyInsights />)} />
         <Route path="/plan" element={ok(W.work('plan'), <PlanPage />)} />
         <Route path="/record" element={ok(W.work('record'), <RecordPage />)} />
         <Route path="/week" element={<Navigate to="/record" replace />} />
