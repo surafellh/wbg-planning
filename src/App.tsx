@@ -19,7 +19,7 @@ import { NewObjective } from './pages/work/MyGoals';
 import { InboxPage, Me, Today } from './pages/work/Inbox';
 import { PlanPage } from './pages/work/Plan';
 import { RecordPage } from './pages/work/Record';
-import { OurStrategy, MyInsights } from './pages/work/Strategy';
+import { OurStrategy, MyInsights, StrategicPlan } from './pages/work/Strategy';
 import { RescopeEditor, ResourcesMonthly, Portfolio, Backup, ErpReplan } from './pages/studio/More';
 import { Search } from './lib/search';
 import { Overview, Alignment, WhoDoesWhat } from './pages/insights/Insights';
@@ -45,11 +45,12 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       const lead = role !== 'employee'; const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)).filter(x => x.id !== me.id) : []; const ids = new Set(team.map(x => x.id));
       const inbox = db.objectives.filter(o => o.status === 'Submitted' && ids.has(o.owner_position_id)).length + db.deliverables.filter(d => d.status === 'done' && ids.has(d.owner_position_id)).length + db.week_reviews.filter(r => ids.has(r.position_id) && r.submitted_at && !r.feedback_at).length + db.scorecards.filter(s => ids.has(s.position_id) && s.status === 'Discuss').length;
       const unread = db.messages.filter(m => m.to_user === me.user_id && !m.read_at).length;
-      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'How we cascade', icon: I.align }, { k: 'insights_me', to: '/my-insights', label: 'My insights', icon: I.overview }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
+      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'How we cascade', icon: I.align }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
         { k: 'inbox', to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { k: 'me', to: '/me', label: 'My performance', icon: I.me }].filter(x => W.work(x.k))];
       return [{ items }];
     }
-    if (win === 'insights') return [{ items: [{ to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
+    if (win === 'insights' && !W.fullInsights) return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.overview }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }] }];
+    if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
       { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, ...(moduleOn(db, 'projects') ? [{ to: '/insights/projects', label: 'Projects', icon: I.plan }] : [])] },
       { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
     const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
@@ -96,7 +97,7 @@ function Shell() {
   const isAdmin = myPositions.some(p => p.role === 'super_admin');
   const wins: [Win, string][] = [['work', 'Work'], ...(W.insights ? [['insights', 'Insights'] as [Win, string]] : []), ...(W.studio ? [['studio', 'Studio'] as [Win, string]] : [])];
   const firstStudio = ['monitor', 'okr', 'targets', 'revenue', 'budget', 'strategy', 'resources', 'rescope', 'calendar', 'scorecards', 'projects'].find(k => W.item(k)) || 'monitor';
-  const go = (w: Win) => nav(w === 'work' ? '/today' : w === 'insights' ? '/insights/overview' : '/studio/' + firstStudio);
+  const go = (w: Win) => nav(w === 'work' ? '/today' : w === 'insights' ? (W.fullInsights ? '/insights/overview' : '/insights/me') : '/studio/' + firstStudio);
   const S = (k: string, el: ReactNode) => ok(W.studio && W.item(k), el);
   const ok = (cond: boolean, el: ReactNode) => cond ? el : <Navigate to="/today" replace />;
   return <div className={'shell win-' + win}>
@@ -119,7 +120,9 @@ function Shell() {
         {/* Work window */}
         <Route path="/today" element={<Today />} />
         <Route path="/strategy" element={ok(W.work('strategy'), <OurStrategy />)} />
-        <Route path="/my-insights" element={ok(W.work('insights_me'), <MyInsights />)} />
+        <Route path="/my-insights" element={<Navigate to="/insights/me" replace />} />
+        <Route path="/insights/me" element={ok(W.insights, <MyInsights />)} />
+        <Route path="/insights/plan" element={ok(W.insights, <StrategicPlan />)} />
         <Route path="/plan" element={ok(W.work('plan'), <PlanPage />)} />
         <Route path="/record" element={ok(W.work('record'), <RecordPage />)} />
         <Route path="/week" element={<Navigate to="/record" replace />} />
@@ -129,17 +132,17 @@ function Shell() {
         <Route path="/inbox" element={ok(W.work('inbox'), <InboxPage />)} />
         <Route path="/me" element={<Me />} />
         {/* Insights window */}
-        <Route path="/insights" element={<Navigate to="/insights/overview" replace />} />
-        <Route path="/insights/overview" element={ok(W.insights, <Overview />)} />
-        <Route path="/insights/strategy" element={ok(W.insights, <StrategyOverview />)} />
-        <Route path="/insights/map" element={ok(W.insights, <GoalsMap />)} />
-        <Route path="/insights/alignment" element={ok(W.insights, <Alignment />)} />
-        <Route path="/insights/people-work" element={ok(W.insights, <WhoDoesWhat />)} />
-        <Route path="/insights/performance" element={ok(W.insights, <PerfOrg />)} />
-        <Route path="/insights/people" element={ok(W.insights, <PerfPeople />)} />
-        <Route path="/insights/reports" element={ok(W.insights, <Reports />)} />
-        <Route path="/insights/group" element={ok(W.insights, <GroupView />)} />
-        <Route path="/insights/projects" element={ok(W.insights, <Portfolio />)} />
+        <Route path="/insights" element={<Navigate to={W.fullInsights ? '/insights/overview' : '/insights/me'} replace />} />
+        <Route path="/insights/overview" element={ok(W.fullInsights, <Overview />)} />
+        <Route path="/insights/strategy" element={ok(W.fullInsights, <StrategyOverview />)} />
+        <Route path="/insights/map" element={ok(W.fullInsights, <GoalsMap />)} />
+        <Route path="/insights/alignment" element={ok(W.fullInsights, <Alignment />)} />
+        <Route path="/insights/people-work" element={ok(W.fullInsights, <WhoDoesWhat />)} />
+        <Route path="/insights/performance" element={ok(W.fullInsights, <PerfOrg />)} />
+        <Route path="/insights/people" element={ok(W.fullInsights, <PerfPeople />)} />
+        <Route path="/insights/reports" element={ok(W.fullInsights, <Reports />)} />
+        <Route path="/insights/group" element={ok(W.fullInsights, <GroupView />)} />
+        <Route path="/insights/projects" element={ok(W.fullInsights, <Portfolio />)} />
         {/* Studio window */}
         <Route path="/studio" element={<Navigate to={'/studio/' + firstStudio} replace />} />
         <Route path="/studio/monitor" element={S('monitor', <Monitor />)} />
