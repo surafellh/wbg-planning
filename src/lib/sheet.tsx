@@ -2,7 +2,7 @@
    paste a block copied from Excel, Ctrl+Z / Ctrl+Y undo and redo. The parent keeps the rows. */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-export type Col = { key: string; label: string; type?: 'text' | 'number' | 'select' | 'date' | 'ro'; options?: [string, string][]; width?: number; tip?: string; fmt?: (v: any, row: any) => ReactNode; total?: boolean; editable?: (row: any) => boolean };
+export type Col = { key: string; label: string; type?: 'text' | 'number' | 'select' | 'date' | 'ro'; options?: [string, string][]; placeholder?: string; width?: number; tip?: string; fmt?: (v: any, row: any) => ReactNode; total?: boolean; editable?: (row: any) => boolean };
 type Change = { i: number; key: string; old: any; val: any };
 
 export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height, empty, footer }: {
@@ -46,7 +46,7 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
         {cols.map((c, j) => { const on = sel && sel[0] === i && sel[1] === j; const ed = on && edit !== null; const v = r[c.key]; const ro = !can(i, j);
           return <td key={c.key} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={() => { if (!on) { commit(); setSel([i, j]); } }} onDoubleClick={() => can(i, j) && c.type !== 'select' && setEdit(v == null ? '' : String(v))}>
             {ed ? <input ref={el => { inp.current = el; }} value={edit!} onChange={e => setEdit(e.target.value)} onBlur={commit} />
-              : c.type === 'select' && !ro ? <select value={v ?? ''} onChange={e => set(i, c.key, e.target.value || null)} onFocus={() => setSel([i, j])}>{<option value="">—</option>}{(c.options || []).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
+              : c.type === 'select' && !ro ? <select className={v ? '' : 'empty'} value={v ?? ''} onChange={e => set(i, c.key, e.target.value || null)} onFocus={() => setSel([i, j])}>{<option value="">{c.placeholder || '—'}</option>}{(c.options || []).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
               : c.fmt ? c.fmt(v, r) : c.type === 'select' ? ((c.options || []).find(o => o[0] === v)?.[1] ?? '') : c.type === 'number' ? (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })) : (v ?? '')}
           </td>; })}
         {onDelete && !readOnly && <td className="rn"><button className="xdel" title="Delete row" onClick={() => onDelete(i)}>×</button></td>}

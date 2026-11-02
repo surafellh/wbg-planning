@@ -1,18 +1,42 @@
+import { resultRule } from '../lib/calc';
 import { useState } from 'react';
 import { useData, useSave, byId, ROLE_NAME, CAPS, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { Page, NumIn, Pill, Modal } from '../lib/ui';
 import { ClaimsPanel } from './Claim';
 
+/** How objective scores roll up and how a person's result is built — per level. */
+export function ScoringRules() {
+  const { db } = useData(); const save = useSave(); if (!db) return null;
+  const put = (key: string, value: any) => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], 'Saved');
+  const os = db.settings.own_share || {}; const rr = db.settings.result_rules || {};
+  const LV: [string, string][] = [['unit', 'Unit head'], ['department', 'Department head'], ['division', 'Division head'], ['employee', 'Team member']];
+  const notSet = db.objectives.filter(o => o.level !== 'individual' && o.status !== 'Archived' && (o.own_weight == null || o.own_weight === '') && db.key_results.some(k => k.objective_id === o.id) && db.objectives.some(c => c.parent_objective_id === o.id && c.status !== 'Archived'));
+  return <><div className="card stack"><h2>A person's result</h2>
+    <p className="note">Result = weight × organisation part + (100% − weight) × personal part. The organisation part for a leader is the organisation they <b>lead</b>: a unit head is measured with the unit's performance, a department head with the department's, a division head with the division's. Personal part: agreed quarter scorecard, otherwise accepted deliverables, otherwise key results they own.</p>
+    <div className="tw"><table className="t"><thead><tr><th>Level</th><th data-tip="Which organisation's score is the organisation part.">Organisation part</th><th className="n" data-tip="How much the organisation part weighs in the result. 0% = personal work only.">Weight %</th><th>Example</th></tr></thead><tbody>
+      {LV.map(([k, l]) => { const r = resultRule(db, k); return <tr key={k}><td><b>{l}</b></td>
+        <td><select value={r.source} onChange={e => put('result_rules', { ...rr, [k]: { ...r, source: e.target.value } })}>{k !== 'employee' && <option value="led">The organisation they lead</option>}<option value="own">The department / division they sit in</option><option value="unit">The whole business unit</option><option value="none">None — personal work only</option></select></td>
+        <td className="n"><NumIn value={r.share} w={70} onChange={v => v != null && v >= 0 && v <= 100 && put('result_rules', { ...rr, [k]: { ...r, share: v } })} /></td>
+        <td className="mini">{r.source === 'none' ? '100% personal' : `${r.share}% ${r.source === 'led' ? 'organisation led' : r.source === 'unit' ? 'unit' : 'own department/division'} + ${100 - r.share}% personal`}</td></tr>; })}
+    </tbody></table></div></div>
+  <div className="card stack"><h2>Performance bands</h2><p className="note">A result at or above a band's minimum gets that band. Highest first.</p>
+    <div className="tw"><table className="t"><thead><tr><th>Band</th><th className="n">From (%)</th><th /></tr></thead><tbody>
+      {((db.settings.bands || []) as Row[]).map((b, i, arr) => <tr key={i}><td><input type="text" defaultValue={b.name} onBlur={e => e.target.value.trim() && e.target.value !== b.name && put('bands', arr.map((x, j) => j === i ? { ...x, name: e.target.value.trim() } : x))} /></td>
+        <td className="n"><NumIn value={b.min} w={70} onChange={v => v != null && put('bands', arr.map((x, j) => j === i ? { ...x, min: v } : x).sort((a, c) => c.min - a.min))} /></td><td><button className="btn sm" onClick={() => put('bands', arr.filter((_, j) => j !== i))}>×</button></td></tr>)}
+    </tbody></table></div><div><button className="btn sm" onClick={() => put('bands', [...(db.settings.bands || []), { name: 'New band', min: 0 }])}>+ Band</button></div></div>
+  <div className="card stack"><h2>Objective roll-up: own key results vs objectives below</h2>
+    <p className="note">When an objective has its own key results <b>and</b> objectives cascaded below it, its score = own share × its key results + (100% − own share) × the objectives below. Each owner sets the own share on their objective (Objective planner → edit objective). Until they do, the default for the level below is used.</p>
+    <div className="g4">{([['unit', 'Unit objectives'], ['department', 'Department objectives'], ['division', 'Division objectives']] as const).map(([k, l]) => <label key={k} className="f">{l} — default own share (%)<NumIn value={os[k] ?? 50} onChange={v => v != null && v >= 0 && v <= 100 && put('own_share', { ...os, [k]: v })} /></label>)}</div>
+    {notSet.length > 0 ? <div className="banner warn">{notSet.length} objectives with both their own key results and objectives below still use the default: {notSet.slice(0, 5).map(o => o.text.slice(0, 50)).join(' · ')}{notSet.length > 5 ? ' …' : ''}</div> : <div className="banner good">Every objective with both its own key results and objectives below has its own share set.</div>}
+  </div></>;
+}
+
 export function SettingsRules() {
   const { db } = useData(); const save = useSave(); if (!db) return null;
   const s = db.settings; const sm = s.status_method || {}; const w = s.org_weights || {}; const t = s.status_thresholds || {}; const hr = s.hr_scale || {}; const cur = s.current || {};
   const put = (key: string, value: any) => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], 'Saved');
-  return <Page title="Rules" desc="The numbers behind scores, statuses and results." help={<p>These settings apply to every unit. The organisation share decides how much of a person's result comes from their organisation's score; the rest is their personal part. Changes apply immediately to every score shown in the app.</p>}>
-    <div className="card stack"><h2>Organisation share of a person's result</h2>
-      <div className="g4">{([['unit', 'Unit head'], ['department', 'Department head'], ['division', 'Division head'], ['employee', 'Team member']] as const).map(([k, l]) =>
-        <label key={k} className="f">{l} (%)<NumIn value={w[k]} onChange={v => v != null && v >= 0 && v <= 100 && put('org_weights', { ...w, [k]: v })} /></label>)}</div>
-      <p className="note">Result = share × organisation score + (100% − share) × personal part.</p></div>
+  return <>
     <div className="card stack"><h2>Status: on track, behind, off track</h2>
       <div className="g4">
         <label className="f">How progress is judged<select value={sm.method || 'pace'} onChange={e => put('status_method', { ...sm, method: e.target.value })}><option value="pace">On pace — against the share of the period passed</option><option value="absolute">Absolute — against the full period target</option></select></label>
@@ -22,15 +46,15 @@ export function SettingsRules() {
       </div>
       <label className="f" style={{ maxWidth: 420 }}>When the owner's confidence is Low<select value={sm.low_confidence || 'behind'} onChange={e => put('status_method', { ...sm, low_confidence: e.target.value })}><option value="behind">Show at most "Behind"</option><option value="ignore">Ignore confidence</option></select></label>
       <div className="banner"><div><b>Example with the current rules:</b> six weeks into a 13-week quarter (46% passed), a key result whose quarter target is 100 needs about {Math.round(46 * (t.on_track || 95) / 100)} to be on track and is off track below {Math.round(46 * (t.off_track || 70) / 100)}. Key results taken from the plan, deliverables or objectives below are already "to date" and are compared directly. Once the period ends, the full target applies.</div></div></div>
-    <div className="card stack"><h2>HR and calendar</h2><div className="g4">
+    <div className="card stack"><h2>HR</h2><div className="g4">
       <label className="f">Results sent to HR out of (%)<NumIn value={hr.max} onChange={v => v != null && put('hr_scale', { ...hr, max: v })} /></label>
-      <label className="f">Current quarter<select value={cur.quarter} onChange={e => put('current', { ...cur, quarter: Number(e.target.value) })}>{[1, 2, 3, 4].map(q => <option key={q} value={q}>Q{q}</option>)}</select></label></div>
-      <p className="note">Fiscal year starts 8 July · weeks Saturday–Friday · weekly cut-off Saturday 2:00 PM · month closes on day 9.</p></div>
-    <div className="card"><h2>Who sees what</h2><div className="tw"><table className="t"><thead><tr><th>Can</th>{(Object.keys(ROLE_NAME) as (keyof typeof ROLE_NAME)[]).filter(r => r !== 'none').map(r => <th key={r}>{ROLE_NAME[r]}</th>)}</tr></thead><tbody>
+      <label className="f" hidden>Current quarter<select value={cur.quarter} onChange={e => put('current', { ...cur, quarter: Number(e.target.value) })}>{[1, 2, 3, 4].map(q => <option key={q} value={q}>Q{q}</option>)}</select></label></div>
+      </div>
+    <div className="card" hidden><h2>Who sees what</h2><div className="tw"><table className="t"><thead><tr><th>Can</th>{(Object.keys(ROLE_NAME) as (keyof typeof ROLE_NAME)[]).filter(r => r !== 'none').map(r => <th key={r}>{ROLE_NAME[r]}</th>)}</tr></thead><tbody>
       {Object.entries({ seeGroup: 'See every unit', editOKR: 'Edit OKRs', editPlan: 'Edit the annual plan', enterActuals: 'Enter actuals', approve: 'Approve plans', finalApprove: 'Final approval', managePeople: 'Accept deliverables', reports: 'See reports', settings: 'Change settings' }).map(([k, l]) =>
         <tr key={k}><td>{l}</td>{(Object.keys(ROLE_NAME) as (keyof typeof ROLE_NAME)[]).filter(r => r !== 'none').map(r => <td key={r}>{CAPS[k].includes(r) ? '✓' : ''}</td>)}</tr>)}
     </tbody></table></div><p className="note">Everyone sees their own unit's strategy, OKRs and scores, and their own work and result. The database enforces the same rules.</p></div>
-  </Page>;
+  </>;
 }
 
 export function SettingsPeople() {
