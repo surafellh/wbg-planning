@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krsOf, childObjectives, sum, fmt, linesOf, MONTHS, AGG_NAME, DIR_NAME } from '../lib/calc';
-import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod } from '../lib/ui';
+import { krsOf, childObjectives, sum, fmt, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds } from '../lib/calc';
+import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter } from '../lib/ui';
+import { Link } from 'react-router-dom';
 import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer } from './Goals';
 
 export function orgOptions(db: DB, unit: string) {
@@ -42,7 +43,7 @@ function ObjModal({ unit, init, onClose }: { unit: string; init: Row; onClose: (
     const org = byId(db!.org_units, f.org_unit_id);
     const row: Row = { unit_id: unit, org_unit_id: f.org_unit_id, level: kindToLevel(org?.kind || 'unit'), text: f.text.trim(), owner_position_id: f.owner_position_id || null,
       unit_goal_id: f.link === 'goal' ? f.unit_goal_id || null : null, parent_objective_id: f.link === 'obj' ? f.parent_objective_id || null : null, parent_kr_id: f.link === 'kr' ? f.parent_kr_id || null : null,
-      weight_to_parent: f.link === 'goal' ? null : f.weight_to_parent ?? null };
+      weight_to_parent: f.link === 'goal' ? null : f.weight_to_parent ?? null, own_weight: f.own_weight ?? null };
     const ok = await save(() => f.id ? sb.from('objectives').update(row).eq('id', f.id) : sb.from('objectives').insert({ ...row, status: 'Draft' }), ['objectives'], 'Objective saved');
     if (ok) onClose();
   }
@@ -57,7 +58,8 @@ function ObjModal({ unit, init, onClose }: { unit: string; init: Row; onClose: (
     <label className="f">Objective<textarea rows={2} value={f.text || ''} onChange={e => set('text', e.target.value)} placeholder="What we want to achieve, in plain words" /></label>
     <div className="g2"><label className="f">Owned by (organisation)<select value={f.org_unit_id || ''} onChange={e => set('org_unit_id', e.target.value)}>{orgs.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label></div>
-    {f.link !== 'goal' && <label className="f">Weight in what it delivers (%)<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} /></label>}
+    <div className="g2">{f.link !== 'goal' && <label className="f" data-tip="Its share in the objective above. The objectives under one parent add up to 100% — at every level (unit → departments, department → divisions).">Weight in what it delivers (%)<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} /></label>}
+      <label className="f" data-tip="When this objective has its own key results AND objectives below it, its score = own share × its key results + the rest × the objectives below. Default 50%.">Share from its own key results (%)<NumIn value={f.own_weight} onChange={v => set('own_weight', v)} /></label></div>
     <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.text?.trim() || (f.link === 'goal' && !f.unit_goal_id)} onClick={go}>Save</button></div>
   </Modal>;
 }
@@ -87,7 +89,7 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
   async function go() {
     const year = f.target_mode === 'annual' ? f.year_target ?? null : (f.year_target ?? implied);
     const row: Row = { objective_id: f.objective_id, title: f.title.trim(), uom: f.uom || null, aggregation: f.aggregation, direction: f.direction, target_mode: f.target_mode, tolerance: f.tolerance ?? null,
-      kr_type: f.aggregation === 'sum' ? 'cumulative' : 'level', lower_is_better: f.direction === 'decrease', weight: f.weight ?? null, owner_position_id: f.owner_position_id || null, measure: f.measure, baseline: f.baseline ?? null, year_target: year, confidence: f.confidence };
+      kr_type: f.aggregation === 'sum' ? 'cumulative' : 'level', lower_is_better: f.direction === 'decrease', weight: f.weight ?? null, owner_position_id: f.owner_position_id || null, measure: f.measure, baseline: f.baseline ?? null, year_target: year, confidence: f.confidence, state: f.state || 'active', state_reason: f.state_reason || null, state_evidence: f.state_evidence || null, state_at: f.state && f.state !== 'active' ? new Date().toISOString() : null };
     const r = f.id ? await sb.from('key_results').update(row).eq('id', f.id).select('id').single() : await sb.from('key_results').insert(row).select('id').single();
     if (r.error) { alert(r.error.message); return; }
     const id = r.data.id;
@@ -132,13 +134,18 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
     <div className="g2">
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label>
       <label className="f">Confidence<select value={f.confidence} onChange={e => set('confidence', e.target.value)}><option>High</option><option>Medium</option><option>Low</option></select></label></div>
+    {f.id && <div className="card stack"><h3>Status of this key result</h3><div className="g3">
+      <label className="f">State<select value={f.state || 'active'} onChange={e => set('state', e.target.value)}><option value="active">Active — scored</option><option value="paused">Paused — not scored for now</option><option value="dropped">Dropped — focus changed</option></select></label>
+      <label className="f">Reason<input type="text" value={f.state_reason || ''} onChange={e => set('state_reason', e.target.value)} placeholder="Why the target or state changed" /></label>
+      <label className="f">Evidence link<input type="text" value={f.state_evidence || ''} onChange={e => set('state_evidence', e.target.value)} /></label></div>
+      <p className="note">Pausing or dropping keeps the history but removes it from scores. Changing the target after approval: use Work → Plan → Targets (sent for approval) or a rescope. Every change is in the audit log.</p></div>}
     <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this key result?') && await save(() => sb.from('key_results').delete().eq('id', f.id), ['key_results', 'check_ins'], 'Deleted')) onClose(); }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.title?.trim()} onClick={go}>Save</button></div>
   </Modal>;
 }
 
 export default function OkrPlan() {
   const { db, unit } = useData(); const save = useSave();
-  const [p, setP] = usePeriod(); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
+  const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
   const unitOrg = unit;
@@ -146,6 +153,8 @@ export default function OkrPlan() {
   const kidW = (oid: string) => sum(childObjectives(db, oid).map(c => Number(c.weight_to_parent) || 0));
   const issues = db.objectives.filter(o => o.unit_id === unit && ((krsOf(db, o.id).length && Math.round(krW(o.id)) !== 100) || (childObjectives(db, o.id).length && Math.round(kidW(o.id)) !== 100)));
   const extra = (o: Row) => <div className="row">
+    {(o.state || 'active') !== 'active' && <Pill tone="warn">{o.state}</Pill>}
+    <button className="btn sm" data-tip="Pause: keep it but stop scoring it (e.g. focus changed). Resume any time." onClick={() => { const st = (o.state || 'active') === 'active' ? 'paused' : 'active'; const why = st === 'paused' ? prompt('Why is it paused?') : ''; if (st === 'paused' && !why) return; save(() => sb.from('objectives').update({ state: st, state_reason: why || null }).eq('id', o.id), ['objectives'], st === 'paused' ? 'Paused' : 'Resumed'); }}>{(o.state || 'active') === 'active' ? 'Pause' : 'Resume'}</button>
     {krsOf(db, o.id).length > 0 && Math.round(krW(o.id)) !== 100 && <Pill tone="warn">KR weights {fmt(krW(o.id))}%</Pill>}
     {childObjectives(db, o.id).length > 0 && Math.round(kidW(o.id)) !== 100 && <Pill tone="warn">cascade {fmt(kidW(o.id))}%</Pill>}
     <button className="btn sm" onClick={() => setKm({ objective_id: o.id, owner_position_id: o.owner_position_id })}>+ Key result</button>
@@ -160,14 +169,15 @@ export default function OkrPlan() {
       <li><b>Submit.</b> The OKR plan goes to Group Strategy, who approve it or return it with a note.</li></ol>
     <p>Pills warn when weights do not add up to 100%. Click a key result to see its detail; use Edit on it there via its objective.</p>
     <p>Objectives brought over from the ERP keep their ERP status; review and link the ones listed under "Not linked to a goal yet".</p></>}>
-    <Cmd right={<><PeriodPicker value={p} onChange={setP} /><button className="btn pri" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
+    <Cmd right={<><OrgFilter value={org} onChange={setOrg} /><PeriodPicker value={p} onChange={setP} /><Link className="btn" to="/goals/new">Guided new objective</Link><button className="btn pri" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
     <StatusBar unit={unit} kind="okr" label="OKR plan 2026/27" />
     {issues.length > 0 && <div className="banner warn">{issues.length} objective{issues.length > 1 ? 's have' : ' has'} weights that do not add up to 100%.</div>}
     {!tree.length && <Empty>No strategic goals for this unit yet. Group Strategy loads them from the unit strategy.</Empty>}
-    {tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
+    {org && <section className="pil"><div className="pilh">Objectives of {byId(db.org_units, org)?.name} and below</div>{db.objectives.filter(o => subtreeIds(db, org).has(o.org_unit_id) && o.status !== 'Archived' && o.level !== 'individual').map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} depth={1} />)}</section>}
+    {!org && tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
       {goals.map(g => <div className="goal" key={g.id}><div className="goalh">{g.code} {g.name}<button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: g.id })}>+ Objective</button></div>
         {topObjectives(db, g.id).map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>)}</section>)}
-    {loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
+    {!org && loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
     {om && <ObjModal unit={unit} init={om} onClose={() => setOm(null)} />}
     {km && <KrModal unit={unit} init={km} onClose={() => setKm(null)} />}
     {kr && <KrDrawer id={kr} onClose={() => setKr(null)} />}

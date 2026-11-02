@@ -10,12 +10,14 @@ import { Thread } from '../../lib/social';
 
 export function Overview() {
   const { db, unit, can, units } = useData(); const [p, setP] = usePeriod(); if (!db || !unit) return null; const u = byId(db.org_units, unit)!;
-  return <Page title="Overview" desc={can('seeGroup') ? 'Operational and financial performance across the pilot units.' : `${u.name}: operational and financial performance.`}>
+  return <Page title="Overview" desc={can('seeGroup') ? 'Operational and financial performance across the pilot units.' : `${u.name}: operational and financial performance.`} help={<>
+    <h3>OKR score</h3><p>The average score of a unit's own objectives for the period chosen. Each objective's score is the weighted progress of its key results against the period target, blended (by its "own share") with the weighted score of the department and division objectives below it. So the unit score reflects the whole cascade, organisation first.</p>
+    <h3>Key results</h3><p>All organisation key results — unit, department and division — with their status judged on pace: early in a quarter, less is expected. "Updated" shows how many check-in key results were updated in the last 30 days.</p>
+    <h3>Financial performance</h3><p>Pick one unit, all combined, or compare units; months or quarters; and the metric (revenue, gross profit, margin, opex, EBITDA, operating profit, net income, cash). Plan comes from the annual plan; actuals from Finance; cash actuals from the weekly tracker's bank positions.</p></>}>
     <Cmd right={<PeriodPicker value={p} onChange={setP} />} />
     {can('seeGroup') && <GroupBoard db={db} p={p} />}
     <div style={{ marginTop: 12 }}><Operational db={db} unit={unit} p={p} /></div>
-    <div style={{ marginTop: 12 }}><Financial db={db} units={[unit]} label={u.name} /></div>
-    {can('seeGroup') && <div style={{ marginTop: 12 }}><Financial db={db} units={units.map(x => x.id)} label="Pilot units combined" /></div>}
+    <div style={{ marginTop: 12 }}><Financial db={db} units={can('seeGroup') ? units.map(x => x.id) : [unit]} label={can('seeGroup') ? 'Pilot units combined' : u.name} /></div>
   </Page>;
 }
 
@@ -53,7 +55,7 @@ export function Alignment() {
   if (!db || !unit) return null;
   const show = (o: Row) => ind === 'all' || o.level !== 'individual';
   const match = (o: Row) => !q || o.text.toLowerCase().includes(q.toLowerCase()) || posName(db, o.owner_position_id).toLowerCase().includes(q.toLowerCase());
-  const tree = unitGoalsTree(db, unit); const objs = db.objectives.filter(o => o.unit_id === unit);
+  const tree = unitGoalsTree(db, unit); const objs = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived');
   const linked = objs.filter(o => o.unit_goal_id || o.parent_objective_id || o.parent_kr_id).length;
   const loose = objs.filter(o => !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id && show(o));
   const ppl = new Set(objs.map(o => o.owner_position_id)).size;

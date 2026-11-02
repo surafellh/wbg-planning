@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, type Period } from '../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill } from '../lib/ui';
+import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, subtreeIds, unitOfObjective, type Period } from '../lib/calc';
+import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
 const LVL: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
@@ -12,8 +12,8 @@ export function unitGoalsTree(db: DB, unit: string) {
   const pillars = db.unit_pillars.filter(p => p.unit_id === unit).sort((a, b) => a.sort - b.sort);
   return pillars.map(p => ({ p, goals: db.unit_goals.filter(g => g.pillar_id === p.id).sort((a, b) => a.sort - b.sort) }));
 }
-export const topObjectives = (db: DB, goalId: string) => db.objectives.filter(o => o.unit_goal_id === goalId).sort((a, b) => a.sort - b.sort);
-export const unlinked = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id);
+export const topObjectives = (db: DB, goalId: string) => db.objectives.filter(o => o.unit_goal_id === goalId && o.status !== 'Archived').sort((a, b) => a.sort - b.sort);
+export const unlinked = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id);
 /** All objectives under a goal, at every level (for goal and pillar scores). */
 export function goalScore(db: DB, goalId: string, p: Period) { return avg(topObjectives(db, goalId).map(o => objScore(db, o, p))); }
 export function pillarScore(db: DB, pillarId: string, p: Period) { return avg(db.unit_goals.filter(g => g.pillar_id === pillarId).map(g => goalScore(db, g.id, p))); }
@@ -22,7 +22,7 @@ export function statusCounts(db: DB, krs: Row[], p: Period) {
   krs.forEach(k => { const s = krState(db, k, p).label; if (s in c) c[s]++; else c.other++; });
   return [{ label: 'On track', n: c['On track'], tone: 'good' }, { label: 'Behind', n: c.Behind, tone: 'warn' }, { label: 'Off track', n: c['Off track'], tone: 'bad' }, { label: 'No update / too early', n: c['No update'] + c.other, tone: 'none' }];
 }
-export const unitKrs = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit).flatMap(o => krsOf(db, o.id));
+export const unitKrs = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && o.status !== 'Archived').flatMap(o => krsOf(db, o.id));
 
 export function KrRow({ k, p, onOpen }: { k: Row; p: Period; onOpen: (id: string) => void }) {
   const { db } = useData(); if (!db) return null;
@@ -39,7 +39,7 @@ export function KrRow({ k, p, onOpen }: { k: Row; p: Period; onOpen: (id: string
 
 export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; onKr: (id: string) => void; depth?: number; extra?: (o: Row) => React.ReactNode }) {
   const { db } = useData(); const [open, setOpen] = useState(depth < 1); if (!db) return null;
-  const ks = krsOf(db, o.id); const kids = childObjectives(db, o.id).concat(db.objectives.filter(c => c.parent_kr_id && ks.some(k => k.id === c.parent_kr_id)));
+  const ks = krsOf(db, o.id); const kids = childObjectives(db, o.id).concat(db.objectives.filter(c => c.parent_kr_id && c.status !== 'Archived' && ks.some(k => k.id === c.parent_kr_id)));
   const org = byId(db.org_units, o.org_unit_id); const st = objState(db, o, p);
   return <div className="obj">
     <div className="objh"><Ring p={objScore(db, o, p)} size={40} />
@@ -121,7 +121,7 @@ export function StrategyOverview() {
   const u = byId(db.org_units, unit)!; const group = db.org_units.find(x => x.kind === 'group');
   const own = db.strategy_statements.find(s => s.unit_id === unit); const st = own || db.strategy_statements.find(s => s.unit_id === group?.id);
   const tree = unitGoalsTree(db, unit); const krs = unitKrs(db, unit);
-  const nObj = db.objectives.filter(o => o.unit_id === unit).length;
+  const nObj = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived').length;
   return <Page title="Strategy" desc={`${u.name}'s strategic identity, pillars and goals, and how they are doing.`} help={<><p>The strategy is the starting point for everything else: pillars → strategic goals → objectives → key results → deliverables → weekly activities. Each pillar and goal shows its score for the period you choose (average of the objectives under it) and the status of its key results.</p><p>Function units such as HR and Supply Chain work directly to the Group strategy, so they show the Group's vision and mission and the Group pillars they serve.</p></>}>
     <Cmd right={<PeriodPicker value={p} onChange={setP} />} />
     <div className="ident">
@@ -153,18 +153,32 @@ export function StrategyOverview() {
   </Page>;
 }
 
+/** The annual plan feeding the OKRs: revenue streams, cost of sales and budget lines linked to key results (₿). */
+function PlanFeeds({ db, unit, p, onKr }: { db: DB; unit: string; p: Period; onKr: (id: string) => void }) {
+  const links = db.kr_plan_links.map(l => ({ l, k: byId(db.key_results, l.kr_id) })).filter(x => x.k && x.k.state !== 'dropped' && unitOfObjective(db, x.k.objective_id) === unit);
+  if (!links.length) return null;
+  const SEC: Record<string, string> = { rev: 'Revenue plan', cos: 'Cost of sales', opex: 'Budget (cost saving)', capex: 'Capital budget' };
+  return <section className="card" style={{ marginBottom: 12 }}><h3>Annual plan feeding the {periodLabel(p)} OKRs</h3><p className="mini" style={{ margin: '0 0 8px' }}>These key results are measured straight from the revenue plan and budget: when Finance records actuals, the key result, its objective and the goal above move with it.</p>
+    <div className="tw"><table className="t"><thead><tr><th>From</th><th>Lines</th><th>Feeds key result</th><th>Objective</th><th className="n">Plan</th><th className="n">Actual</th><th>Status</th></tr></thead><tbody>
+      {links.map(({ l, k }) => { const s = krState(db, k!, p); const o = byId(db.objectives, k!.objective_id);
+        return <tr key={l.kr_id} className="click" onClick={() => onKr(k!.id)}><td><b>{SEC[l.section] || l.section}</b>{l.metric === 'quantity' && <div className="mini">quantity</div>}</td><td className="mini">{(l.line_groups || []).length ? (l.line_groups as string[]).join(', ') : 'All lines'}</td><td>{k!.title}</td><td className="mini">{o?.text}</td><td className="n">{fmt(s.target, 1)}</td><td className="n">{fmt(s.actual, 1)}</td><td><StatePill s={s} /></td></tr>; })}
+    </tbody></table></div></section>;
+}
+
 export function GoalsMap() {
-  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [p, setP] = usePeriod(); const [lvl, setLvl] = useState<'all' | 'off'>('all');
+  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [p, setP] = usePeriod(); const [lvl, setLvl] = useState<'all' | 'off'>('all'); const [q, setQ] = useState('');
   if (!db || !unit) return <Page title="Strategy map"><Empty>No unit selected.</Empty></Page>;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
-  const show = (o: Row) => lvl === 'all' || (objState(db, o, p).tone === 'bad');
+  const hit = (o: Row): boolean => !q || o.text.toLowerCase().includes(q.toLowerCase()) || krsOf(db, o.id).some(k => k.title.toLowerCase().includes(q.toLowerCase())) || (byId(db.org_units, o.org_unit_id)?.name || '').toLowerCase().includes(q.toLowerCase()) || childObjectives(db, o.id).some(hit);
+  const show = (o: Row) => (lvl === 'all' || (objState(db, o, p).tone === 'bad')) && hit(o);
   return <Page title="Strategy map" desc="Pillar → strategic goal → objectives → key results, with progress for the period you choose." help={<>
     <h3>Reading the map</h3><ul><li><b>Pillar</b> (black band) → the unit's own <b>strategic goal</b> (↗ shows the Group goal it serves) → <b>objectives</b> with their score ring → <b>key results</b>.</li>
       <li>Every figure is for the period chosen at the top — a month, quarter, half or the year — against that period's target, not the annual total.</li>
       <li>₿ from the annual plan · ✓ from deliverables · ↳ from the objectives below · ✎ checked in with evidence.</li>
       <li><b>Status is judged on pace.</b> Halfway through a quarter, a key result at 50% of its quarter target is on track. The rule is set in Settings → Rules.</li></ul></>}>
-    <Cmd right={<><Seg value={lvl} options={[['all', 'All'], ['off', 'Off track only']]} onChange={setLvl} /><PeriodPicker value={p} onChange={setP} /></>} />
+    <Cmd right={<><input type="text" placeholder="Search objectives, key results, departments" value={q} onChange={e => setQ(e.target.value)} /><Seg value={lvl} options={[['all', 'All'], ['off', 'Off track only']]} onChange={setLvl} /><PeriodPicker value={p} onChange={setP} /></>} />
     {!tree.length && !loose.length && <Empty>No strategy or OKRs loaded for this unit yet.</Empty>}
+    <PlanFeeds db={db} unit={unit} p={p} onKr={setKr} />
     {tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}>
       <div className="pilh">{pil.code} · {pil.name}<span className="sp" /><small>{pct(pillarScore(db, pil.id, p))}</small></div>
       {goals.map(g => { const os = topObjectives(db, g.id).filter(show); const gg = byId(db.group_goals, g.group_goal_id);
@@ -178,12 +192,13 @@ export function GoalsMap() {
 }
 
 export function GoalsQuarter() {
-  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [lvl, setLvl] = useState<'unit' | 'all'>('unit'); const [view, setView] = useState<'Q' | 'M'>('Q');
+  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [lvl, setLvl] = useState<'unit' | 'all'>('all'); const [view, setView] = useState<'Q' | 'M'>('Q'); const [org, setOrg] = useState(''); const [q, setQ] = useState('');
   if (!db || !unit) return null;
-  const objs = db.objectives.filter(o => o.unit_id === unit && (lvl === 'all' || o.level === 'unit'));
+  const sub = org ? subtreeIds(db, org) : null;
+  const objs = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && o.level !== 'individual' && (lvl === 'all' || o.level === 'unit') && (!sub || sub.has(o.org_unit_id)) && (!q || o.text.toLowerCase().includes(q.toLowerCase()) || krsOf(db, o.id).some(k => k.title.toLowerCase().includes(q.toLowerCase()))));
   const cols: Period[] = view === 'Q' ? [1, 2, 3, 4].map(n => ({ t: 'Q', n })) : Array.from({ length: 12 }, (_, i) => ({ t: 'M', n: i + 1 }));
   return <Page title="Targets & progress" desc="Every key result with its target and actual for each quarter or month." help={<p>Each cell shows actual / target for that period, coloured by status. Targets come from the OKR plan (annual, quarterly or monthly entry); key results measured from the annual plan take theirs from the revenue plan or budget. Click a row for detail and check-ins.</p>}>
-    <Cmd right={<><Seg value={view} options={[['Q', 'Quarters'], ['M', 'Months']]} onChange={setView} /><Seg value={lvl} options={[['unit', 'Unit objectives'], ['all', 'All levels']]} onChange={setLvl} /></>} />
+    <Cmd right={<><input type="text" placeholder="Search objectives or key results" value={q} onChange={e => setQ(e.target.value)} /><OrgFilter value={org} onChange={setOrg} /><Seg value={view} options={[['Q', 'Quarters'], ['M', 'Months']]} onChange={setView} /><Seg value={lvl} options={[['unit', 'Unit only'], ['all', 'All levels']]} onChange={setLvl} /></>} />
     <div className="tw"><table className="t"><thead><tr><th className="first">Objective / key result</th><th>Owner</th><th className="n">Year target</th>{cols.map(c => <th key={c.t + c.n} className="n">{periodLabel(c)}</th>)}<th>Year</th></tr></thead><tbody>
       {objs.map(o => [<tr key={o.id} className="g"><td className="first" colSpan={3 + cols.length}>{o.text}</td><td>{pct(objScore(db, o, { t: 'Y', n: 1 }))}</td></tr>,
         ...krsOf(db, o.id).map(k => { const ys = krState(db, k, { t: 'Y', n: 1 });

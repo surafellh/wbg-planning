@@ -1,7 +1,7 @@
 /* STUDIO WINDOW — advanced, editable views: process monitor, strategy builder, scorecards, framework & rules, audit. */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useData, useSave, useTerms, byId, posName, ROLE_NAME, FRAMEWORKS, type DB, type Row } from '../../lib/data';
+import { useData, useSave, useTerms, byId, posName, ROLE_NAME, FRAMEWORKS, STUDIO_ITEMS, STUDIO_LABELS, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { krsOf, krState, currentPeriod, subtreeIds, weekStart, ymd, workStats, delivScore, lastActualMonth, MONTHS, qOfMonth, curMonth, pct, fmt, krTarget } from '../../lib/calc';
 import { Page, Cmd, Pill, Modal, Empty, Seg, NumIn, Bar, UnitPicker } from '../../lib/ui';
@@ -40,6 +40,7 @@ function unitHealth(db: DB, u: Row): Record<string, Cell> {
     rescope: { v: openRescope(db, u.id) ? 'open' : '—', tone: openRescope(db, u.id) ? 'warn' : 'none' },
   };
 }
+const TIPS: Record<string, string> = { okr: 'Status of the unit OKR plan: Draft → Submitted → Approved.', annual: 'Annual plan: Draft → Submitted → Endorsed by Group Strategy → Approved by top management.', struct: 'Share of objectives that have key results or objectives below them.', targets: 'Share of key results with a target for the current quarter.', checkins: 'Share of check-in key results updated in the last 30 days.', users: 'People in the unit with a linked sign-in.', weekly: 'Share of signed-in people who logged activities last week.', deliv: 'Deliverables planned for the current month.', cards: 'Quarter scorecards agreed out of people in the unit.', actuals: 'Latest month covered by Finance actuals.', pending: 'Objectives and deliverables waiting for approval.', rescope: 'Whether a rescope is open.' };
 export function Monitor() {
   const { db, setUnit } = useData(); const { t } = useTerms(); if (!db) return null;
   const units = db.org_units.filter(u => u.kind === 'unit' && u.pilot).sort((a, b) => a.sort - b.sort);
@@ -51,9 +52,9 @@ export function Monitor() {
     <ul><li><b>Structure</b> — objectives that have key results or objectives below them.</li><li><b>Targets set</b> — key results with a target for the current quarter.</li><li><b>Check-ins fresh</b> — manual key results updated in the last 30 days.</li><li><b>Weekly updates</b> — signed-in people who logged activities last week.</li><li><b>Scorecards</b> — quarter scorecards agreed.</li><li><b>Actuals to</b> — the latest month Finance actuals cover.</li></ul></>}>
     <div className="kpis"><div className="tile"><div className="tv">{users}</div><div className="tl">Linked sign-ins</div><div className="ts">of {db.positions.length} positions</div></div><div className={'tile ' + (claims ? 'warn' : '')}><div className="tv">{claims}</div><div className="tl">Sign-ins to confirm</div><div className="ts"><Link to="/studio/people">People & access →</Link></div></div>
       <div className="tile"><div className="tv">{recent}</div><div className="tl">Check-ins, last 7 days</div></div><div className="tile"><div className="tv">{acts7}</div><div className="tl">Activities touched, 7 days</div></div><div className="tile"><div className="tv">{db.notifications.length}</div><div className="tl">My notifications</div></div></div>
-    <div className="tw"><table className="t monitor"><thead><tr><th>Unit</th>{cols.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead><tbody>
+    <div className="tw"><table className="t monitor"><thead><tr><th>Unit</th>{cols.map(([k, l]) => <th key={k} data-tip={TIPS[k]}>{l}</th>)}</tr></thead><tbody>
       {H.map(({ u, h }) => <tr key={u.id}><td><Link to="/studio/okr" onClick={() => setUnit(u.id)}><b>{u.name}</b></Link><div className="mini">{u.revenue_model === 'project' ? 'Project business' : u.revenue_model === 'product' ? 'Product business' : 'Function'}</div></td>
-        {cols.map(([k]) => <td key={k} title={h[k].tip}><span className={'cell ' + h[k].tone}>{h[k].v}</span></td>)}</tr>)}
+        {cols.map(([k]) => <td key={k}><span className={'cell ' + h[k].tone} data-tip={h[k].tip}>{h[k].v}</span></td>)}</tr>)}
     </tbody></table></div>
     <h2 style={{ margin: '18px 0 8px' }}>Cycle steps</h2>
     <div className="cycle-steps">{[['Strategy', 'Pillars, goals, identity', '/studio/strategy'], [`${t('objective')} plan`, 'Objectives, key results, cascade, weights', '/studio/okr'], ['Annual plan', 'Revenue, budget, cash; two-step approval', '/studio/revenue'], ['Resources', 'Funds and the waterline', '/studio/resources'], ['Quarter', 'Targets, deliverables, scorecards', '/studio/scorecards'], ['Month & week', 'Deliverables, activities, check-ins', '/insights/people-work'], ['Review & rescope', 'Results, rescope, versions', '/studio/rescope']].map(([a, b, l], i) => <Link key={a} to={l} className="cstep"><i>{i + 1}</i><b>{a}</b><small>{b}</small></Link>)}</div>
@@ -81,7 +82,7 @@ function GoalModal({ init, unit, group, onClose }: { init: Row; unit: string; gr
         if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
 }
 export function StrategyBuilder() {
-  const { db, unit, can } = useData(); const { t } = useTerms(); const [scope, setScope] = useState<'unit' | 'group'>('unit'); const [pm, setPm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null);
+  const { db, unit, can } = useData(); const save0 = useSave(); const sbConfirm = (id: string) => save0(() => sb.from('unit_goals').update({ link_confirmed: true }).eq('id', id), ['unit_goals'], 'Link confirmed'); const { t } = useTerms(); const [scope, setScope] = useState<'unit' | 'group'>('unit'); const [pm, setPm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null);
   if (!db || !unit) return null; const group = scope === 'group';
   const pillars = (group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit)).slice().sort((a, b) => a.sort - b.sort);
   const goalsOf = (pid: string) => (group ? db.group_goals : db.unit_goals).filter(g => g.pillar_id === pid).sort((a, b) => a.sort - b.sort);
@@ -92,8 +93,9 @@ export function StrategyBuilder() {
     {pillars.map(p => <div key={p.id} className="card"><div className="row"><b style={{ flex: 1 }}>{p.code} · {p.name}</b><button className="btn sm" onClick={() => setGm({ pillar_id: p.id })}>+ {t('goal')}</button><button className="btn sm" onClick={() => setPm(p)}>Edit</button></div>
       {p.description && <div className="mini">{p.description}</div>}
       <div className="tw" style={{ marginTop: 8 }}><table className="t"><tbody>{goalsOf(p.id).map(g => <tr key={g.id} className="click" onClick={() => setGm(g)}><td style={{ width: 60 }}>{g.code}</td><td>{g.name}{g.description && <div className="mini">{g.description}</div>}</td>
-        {!group && <td>{byId(db.group_goals, g.group_goal_id) ? <span className="mini">↗ {byId(db.group_goals, g.group_goal_id)?.name}</span> : <Pill tone="warn">no Group link</Pill>}{!group && !g.link_confirmed && g.group_goal_id && <Pill tone="warn">to confirm</Pill>}</td>}
-        <td className="n">{db.objectives.filter(o => o.unit_goal_id === g.id).length} obj.</td></tr>)}</tbody></table></div></div>)}
+        {!group && <td>{byId(db.group_goals, g.group_goal_id) ? <span className="mini">↗ {byId(db.group_goals, g.group_goal_id)?.name}</span> : <Pill tone="warn">no Group link</Pill>}{!group && !g.link_confirmed && g.group_goal_id && <span data-tip="Proposed from the strategy documents. Group Strategy confirms the link with the unit (button on the right)."><Pill tone="warn">to confirm</Pill></span>}</td>}
+        <td className="n"><span data-tip={db.objectives.filter(o => o.unit_goal_id === g.id && o.status !== 'Archived').map(o => '• ' + o.text).join('\n') || 'No objectives yet'}>{db.objectives.filter(o => o.unit_goal_id === g.id && o.status !== 'Archived').length} objectives</span></td>
+        {!group && g.group_goal_id && !g.link_confirmed && can('approve') && <td><button className="btn sm" onClick={e => { e.stopPropagation(); sbConfirm(g.id); }}>Confirm link</button></td>}</tr>)}</tbody></table></div></div>)}
     {!pillars.length && <Empty>No {t('pillar', true).toLowerCase()} yet.</Empty>}
     {pm && <PillarModal init={pm} unit={unit} group={group} onClose={() => setPm(null)} />}
     {gm && <GoalModal init={gm} unit={unit} group={group} onClose={() => setGm(null)} />}
@@ -122,19 +124,29 @@ export function Scorecards() {
 
 /* ---------- Framework, windows and rules ---------- */
 export function Framework() {
-  const { db } = useData(); const save = useSave(); if (!db) return null;
-  const f = db.settings.framework || { type: 'okr', labels: {} }; const w = db.settings.windows || {};
-  const put = (key: string, value: any) => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], 'Saved');
-  const base = (FRAMEWORKS[f.type] || FRAMEWORKS.okr).labels;
-  const roles = Object.keys(ROLE_NAME).filter(r => r !== 'none');
+  const { db, can, user } = useData(); const save = useSave(); if (!db) return null;
+  const f = db.settings.framework || { type: 'okr', labels: {} }; const w = db.settings.windows || {}; const req = db.settings.framework_request || {};
+  const items = { ...STUDIO_ITEMS, ...(db.settings.studio_items || {}) } as Record<string, string[]>; const wr = db.settings.work_rules || {}; const tax = db.settings.tax_rate || { rate: 30 };
+  const put = (key: string, value: any, msg = 'Saved') => save(() => sb.from('app_settings').upsert({ key, value }), ['app_settings'], msg);
+  const base = (FRAMEWORKS[f.type] || FRAMEWORKS.okr).labels; const roles = Object.keys(ROLE_NAME).filter(r => r !== 'none');
   const toggle = (win: string, r: string) => { const cur: string[] = w[win] || []; put('windows', { ...w, [win]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
-  return <><Page title="Framework & rules" desc="Choose the planning framework and its words, who opens each window, and the scoring rules.">
+  const toggleItem = (k: string, r: string) => { const cur = items[k] || []; put('studio_items', { ...items, [k]: cur.includes(r) ? cur.filter(x => x !== r) : [...cur, r] }); };
+  const yearStart = curMonth() === 1; // the framework is chosen at the start of the fiscal year
+  return <><Page title="Framework & rules" desc="The planning framework and its words, who opens which window and page, work rules, and the scoring rules.">
     <div className="card stack"><h2>Planning framework</h2>
-      <div className="g3">{Object.entries(FRAMEWORKS).map(([k, F]) => <button key={k} className={'kind' + (f.type === k ? ' on' : '')} onClick={() => put('framework', { type: k, labels: {} })}><b>{F.name}</b><small>{Object.values(F.labels).slice(0, 4).join(' → ')}</small></button>)}</div>
-      <p className="note">The structure and scoring stay the same; the framework sets the words everyone sees. You can rename any term below.</p>
+      <div className="g3">{Object.entries(FRAMEWORKS).map(([k, F]) => <button key={k} className={'kind' + (f.type === k ? ' on' : '')} disabled={f.type === k} onClick={() => { if (yearStart && can('finalApprove')) put('framework', { type: k, labels: {} }); else put('framework_request', { type: k, by: user.id, at: new Date().toISOString(), status: 'Pending' }, 'Change requested — top management must approve; it takes effect at the start of the next fiscal year'); }}><b>{F.name}</b><small>{Object.values(F.labels).slice(0, 4).join(' → ')}</small></button>)}</div>
+      {req.status === 'Pending' && <div className="banner warn">Requested change to <b>{FRAMEWORKS[req.type]?.name}</b> on {String(req.at).slice(0, 10)} — waiting for top management.{can('finalApprove') && <> <button className="btn sm pri" onClick={async () => { await put('framework_request', { ...req, status: 'Approved', approved_at: new Date().toISOString() }); if (yearStart) await put('framework', { type: req.type, labels: {} }); }}>Approve</button> <button className="btn sm" onClick={() => put('framework_request', { ...req, status: 'Rejected' })}>Reject</button></>}</div>}
+      {req.status === 'Approved' && !yearStart && <div className="banner">Approved: switches to {FRAMEWORKS[req.type]?.name} at the start of the next fiscal year.</div>}
+      <p className="note">The framework can only change at the start of a fiscal year, with top management approval, so a year is planned and scored one way. Renaming terms below is allowed any time.</p>
       <div className="g3">{Object.keys(base).map(k => <label key={k} className="f">{k.replace('_', ' ')}<input type="text" defaultValue={(f.labels || {})[k] || base[k]} onBlur={e => { const v = e.target.value.trim(); if (v && v !== ((f.labels || {})[k] || base[k])) put('framework', { ...f, labels: { ...(f.labels || {}), [k]: v } }); }} /></label>)}</div></div>
-    <div className="card"><h2>Who opens which window</h2><p className="note">Everyone has the Work window. Insights gives the full picture; Studio is the advanced, editable view; Studio admin adds framework, people, import and audit.</p>
+    <div className="card"><h2>Who opens which window</h2><p className="note">Everyone has the Work window. Insights gives the full picture; Studio is the advanced, editable view; Studio admin adds framework, people, import, backup and audit.</p>
       <div className="tw"><table className="t"><thead><tr><th>Window</th>{roles.map(r => <th key={r}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{[['insights', 'Insights'], ['studio', 'Studio'], ['studio_admin', 'Studio admin']].map(([k, l]) => <tr key={k}><td><b>{l}</b></td>{roles.map(r => <td key={r}><input type="checkbox" checked={(w[k] || []).includes(r)} onChange={() => toggle(k, r)} disabled={k === 'studio_admin' && r === 'super_admin'} /></td>)}</tr>)}</tbody></table></div></div>
+    <div className="card"><h2>Studio pages by role</h2><p className="note">Leaders only see their own unit's data. Changes to an approved plan by anyone other than Group Strategy go through a rescope for approval.</p>
+      <div className="tw"><table className="t"><thead><tr><th>Page</th>{roles.map(r => <th key={r}>{ROLE_NAME[r as keyof typeof ROLE_NAME]}</th>)}</tr></thead><tbody>{Object.keys(STUDIO_ITEMS).map(k => <tr key={k}><td><b>{STUDIO_LABELS[k]}</b></td>{roles.map(r => <td key={r}><input type="checkbox" checked={(items[k] || []).includes(r)} onChange={() => toggleItem(k, r)} /></td>)}</tr>)}</tbody></table></div></div>
+    <div className="card stack"><h2>Work rules</h2><div className="g3">
+      <label className="f">Who plans weekly activities<select value={wr.activities || 'both'} onChange={e => put('work_rules', { ...wr, activities: e.target.value })}><option value="members">Team members plan their own</option><option value="managers">Managers plan for their team</option><option value="both">Both</option></select></label>
+      <label className="f">Monthly deliverables can be changed<select value={wr.deliverable_lock || 'month_start'} onChange={e => put('work_rules', { ...wr, deliverable_lock: e.target.value })}><option value="month_start">Until the month starts (heads any time)</option><option value="open">Any time</option></select></label>
+      <label className="f">Profit tax rate for the income statement (%)<NumIn value={tax.rate} onChange={v => v != null && put('tax_rate', { ...tax, rate: v })} /></label></div></div>
   </Page><SettingsRules /></>;
 }
 
@@ -146,10 +158,19 @@ export function Audit() {
   const who = (u: string) => db.profiles.find(p => p.id === u)?.full_name || db.profiles.find(p => p.id === u)?.email || 'system';
   const label = (r: Row) => { const d = r.new_data || r.old_data || {}; return d.text || d.title || d.name || d.holder_name || d.item || d.status || r.row_id; };
   const diff = (r: Row) => { if (r.action !== 'UPDATE' || !r.old_data || !r.new_data) return ''; return Object.keys(r.new_data).filter(k => !['updated_at', 'created_at'].includes(k) && JSON.stringify(r.new_data[k]) !== JSON.stringify(r.old_data[k])).slice(0, 4).map(k => `${k}: ${String(JSON.stringify(r.old_data[k])).slice(0, 30)} → ${String(JSON.stringify(r.new_data[k])).slice(0, 30)}`).join(' · '); };
-  return <Page title="Audit log" desc="Every change to objectives, key results, plans, approvals, scorecards and positions — who, when, what.">
+  const save = useSave();
+  async function undo(r: Row, redo = false) {
+    const snap = redo ? r.new_data : r.old_data; let error: any = null;
+    if (!redo && r.action === 'INSERT') ({ error } = await sb.from(r.table_name).delete().eq('id', r.row_id));
+    else if (redo && r.action === 'DELETE') ({ error } = await sb.from(r.table_name).delete().eq('id', r.row_id));
+    else if (snap) ({ error } = await sb.rpc('restore_row', { tbl: r.table_name, r: snap }));
+    await save(() => Promise.resolve({ error }) as any, [r.table_name], error ? undefined : redo ? 'Redone' : 'Undone'); setTbl(x => x);
+  }
+  return <Page title="Audit log" desc="Every change to objectives, key results, plans, approvals, scorecards and positions — who, when, what — with undo and redo." help={<p><b>Undo</b> puts a row back exactly as it was before that change (an added row is removed, a deleted row comes back). <b>Redo</b> re-applies the change. Undo and redo are themselves recorded here.</p>}>
     <Cmd right={<select value={tbl} onChange={e => setTbl(e.target.value)} aria-label="Table"><option value="">All tables</option>{['objectives', 'key_results', 'plan_lines', 'plan_status', 'rescopes', 'scorecards', 'positions', 'unit_goals', 'unit_pillars', 'deliverables'].map(t => <option key={t}>{t}</option>)}</select>} />
-    {err ? <div className="banner bad">{err}</div> : !rows.length ? <Empty>No changes recorded yet.</Empty> : <div className="tw"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Change</th></tr></thead><tbody>
-      {rows.map(r => <tr key={r.id}><td className="mini">{String(r.at).slice(0, 16).replace('T', ' ')}</td><td>{who(r.by_user)}</td><td><Pill tone={r.action === 'DELETE' ? 'bad' : r.action === 'INSERT' ? 'good' : 'none'}>{r.action.toLowerCase()}</Pill> <span className="mini">{r.table_name}</span></td><td>{String(label(r)).slice(0, 80)}</td><td className="mini">{diff(r)}</td></tr>)}
+    {err ? <div className="banner bad">{err}</div> : !rows.length ? <Empty>No changes recorded yet.</Empty> : <div className="tw"><table className="t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Change</th><th /></tr></thead><tbody>
+      {rows.map(r => <tr key={r.id}><td className="mini">{String(r.at).slice(0, 16).replace('T', ' ')}</td><td>{who(r.by_user)}</td><td><Pill tone={r.action === 'DELETE' ? 'bad' : r.action === 'INSERT' ? 'good' : 'none'}>{r.action.toLowerCase()}</Pill> <span className="mini">{r.table_name}</span></td><td>{String(label(r)).slice(0, 80)}</td><td className="mini">{diff(r)}</td>
+        <td>{r.table_name !== 'plan_status' && <div className="row" style={{ flexWrap: 'nowrap' }}><button className="btn sm" onClick={() => undo(r)}>Undo</button><button className="btn sm" onClick={() => undo(r, true)}>Redo</button></div>}</td></tr>)}
     </tbody></table></div>}
   </Page>;
 }

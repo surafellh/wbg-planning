@@ -10,13 +10,18 @@ import { ClaimScreen } from './pages/Claim';
 import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
 import { RevenuePlan, BudgetPlan } from './pages/AnnualPlan';
-import { Resources, Rescope, PlanCalendar } from './pages/Resources';
-import { MyWeek, MonthView, TeamView, teamOf } from './pages/Work';
+import { PlanCalendar } from './pages/Resources';
+import { teamOf } from './pages/Work';
 import { PerfOrg, PerfPeople } from './pages/Performance';
 import Reports from './pages/Reports';
 import { SettingsPeople, SettingsImport } from './pages/Settings';
-import { MyGoals, NewObjective } from './pages/work/MyGoals';
-import { Inbox, Me, Today } from './pages/work/Inbox';
+import { NewObjective } from './pages/work/MyGoals';
+import { InboxPage, Me, Today } from './pages/work/Inbox';
+import { PlanPage } from './pages/work/Plan';
+import { RecordPage } from './pages/work/Record';
+import { OurStrategy } from './pages/work/Strategy';
+import { RescopeEditor, ResourcesMonthly, Portfolio, Backup } from './pages/studio/More';
+import { Search } from './lib/search';
 import { Overview, Alignment, WhoDoesWhat } from './pages/insights/Insights';
 import { Monitor, StrategyBuilder, Scorecards, Framework, Audit } from './pages/studio/Studio';
 
@@ -39,20 +44,21 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
     if (win === 'work') {
       const lead = role !== 'employee'; const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)).filter(x => x.id !== me.id) : []; const ids = new Set(team.map(x => x.id));
       const inbox = db.objectives.filter(o => o.status === 'Submitted' && ids.has(o.owner_position_id)).length + db.deliverables.filter(d => d.status === 'done' && ids.has(d.owner_position_id)).length + db.week_reviews.filter(r => ids.has(r.position_id) && r.submitted_at && !r.feedback_at).length + db.scorecards.filter(s => ids.has(s.position_id) && s.status === 'Discuss').length;
-      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, { to: '/week', label: 'My week', icon: I.week }, { to: '/goals', label: `My ${t('objective', true).toLowerCase()}`, icon: I.goals }, { to: '/deliverables', label: t('deliverable', true), icon: I.deliv }];
-      if (lead) items.push({ to: '/inbox', label: 'Inbox', icon: I.inbox, badge: inbox });
-      items.push({ to: '/me', label: 'My performance', icon: I.me });
+      const unread = db.messages.filter(m => m.to_user === me.user_id && !m.read_at).length;
+      const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, { to: '/strategy', label: 'Our strategy', icon: I.strategy }, { to: '/plan', label: 'Plan', icon: I.plan }, { to: '/record', label: 'Record', icon: I.deliv },
+        { to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { to: '/me', label: 'My performance', icon: I.me }];
       return [{ items }];
     }
     if (win === 'insights') return [{ items: [{ to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
-      { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }] },
+      { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, { to: '/insights/projects', label: 'Projects', icon: I.plan }] },
       { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
-    const g: { label?: string; items: Item[] }[] = [{ items: [{ to: '/studio/monitor', label: 'Process monitor', icon: I.monitor }] },
-      { label: 'Plan', items: [{ to: '/studio/strategy', label: 'Strategy builder', icon: I.strategy }, { to: '/studio/okr', label: `${t('objective')} planner`, icon: I.goals }, { to: '/studio/targets', label: 'Targets & progress', icon: I.plan }, { to: '/studio/revenue', label: 'Revenue plan', icon: I.money }, { to: '/studio/budget', label: 'Budget', icon: I.money }, { to: '/studio/resources', label: 'Resources', icon: I.res }, { to: '/studio/rescope', label: 'Rescope & versions', icon: I.plan }, { to: '/studio/calendar', label: 'Planning calendar', icon: I.week }] },
-      { label: 'Performance', items: [{ to: '/studio/scorecards', label: 'Scorecards', icon: I.card }] }];
-    if (W.studioAdmin) g.push({ label: 'System', items: [{ to: '/studio/framework', label: 'Framework & rules', icon: I.cog }, { to: '/studio/people', label: 'People & access', icon: I.people }, { to: '/studio/import', label: 'Data import', icon: I.res }, { to: '/studio/audit', label: 'Audit log', icon: I.audit }] });
-    return g;
-  }, [db, me, role, can, t, win, W.studioAdmin]);
+    const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
+    const g: { label?: string; items: Item[] }[] = [{ items: f([{ k: 'monitor', to: '/studio/monitor', label: 'Process monitor', icon: I.monitor }]) },
+      { label: 'Plan', items: f([{ k: 'strategy', to: '/studio/strategy', label: 'Strategy builder', icon: I.strategy }, { k: 'okr', to: '/studio/okr', label: `${t('objective')} planner`, icon: I.goals }, { k: 'targets', to: '/studio/targets', label: 'Targets & progress', icon: I.plan }, { k: 'revenue', to: '/studio/revenue', label: 'Revenue plan', icon: I.money }, { k: 'budget', to: '/studio/budget', label: 'Budget', icon: I.money }, { k: 'resources', to: '/studio/resources', label: 'Resources & payments', icon: I.res }, { k: 'rescope', to: '/studio/rescope', label: 'Rescope & versions', icon: I.plan }, { k: 'calendar', to: '/studio/calendar', label: 'Planning calendar', icon: I.week }]) },
+      { label: 'Performance', items: f([{ k: 'scorecards', to: '/studio/scorecards', label: 'Scorecards', icon: I.card }, { k: 'projects', to: '/studio/projects', label: 'Project portfolio', icon: I.plan }]) }];
+    if (W.studioAdmin) g.push({ label: 'System', items: [{ to: '/studio/framework', label: 'Framework & rules', icon: I.cog }, { to: '/studio/people', label: 'People & access', icon: I.people }, { to: '/studio/import', label: 'Data import', icon: I.res }, { to: '/studio/backup', label: 'Backup & restore', icon: I.res }, { to: '/studio/audit', label: 'Audit log & undo', icon: I.audit }] });
+    return g.filter(x => x.items.length);
+  }, [db, me, role, can, t, win, W]);
 }
 
 /** System admin only: preview the app as the head or a team member of any department or division. */
@@ -71,19 +77,6 @@ function SeeAs() {
     </select></label>;
 }
 
-function WeekPage() {
-  const { me, role } = useData(); const [ws, setWs] = useState(() => weekStart(new Date())); const [v, setV] = useState<'me' | 'team'>('me'); const { db } = useData();
-  if (!db || !me) return null; const lead = role !== 'employee'; const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)) : [];
-  return <div className="light wide"><div className="lhead"><div><h1>{v === 'me' ? 'My week' : 'My team this week'}</h1><p>Plan, update and close your week — Saturday to Friday.</p></div>{lead && <Seg value={v} options={[['me', 'Me'], ['team', 'My team']]} onChange={setV} />}</div>
-    {v === 'me' ? <MyWeek who={me} ws={ws} setWs={setWs} /> : <TeamView people={team} ws={ws} setWs={setWs} />}</div>;
-}
-function DeliverablesPage() {
-  const { db, me, role } = useData(); const { t } = useTerms(); const [v, setV] = useState<'me' | 'team'>('me'); if (!db || !me) return null; const lead = role !== 'employee';
-  const team = lead ? teamOf(db, me, ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role)) : [];
-  return <div className="light wide"><div className="lhead"><div><h1>{t('deliverable', true)}</h1><p>Concrete outputs due each month — deliver with evidence, get them accepted.</p></div>{lead && <Seg value={v} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setV} />}</div>
-    <MonthView people={v === 'me' ? [me] : team} lead={lead && v === 'team'} /></div>;
-}
-
 function Shell() {
   const { db, loading, error, me, role, viewAs, setViewAs, toastMsg, myPositions, user } = useData();
   const loc = useLocation(); const nav = useNavigate(); const W = useWindows(); const { t } = useTerms();
@@ -96,13 +89,16 @@ function Shell() {
   if (!me) return <ClaimScreen />;
   const isAdmin = myPositions.some(p => p.role === 'super_admin');
   const wins: [Win, string][] = [['work', 'Work'], ...(W.insights ? [['insights', 'Insights'] as [Win, string]] : []), ...(W.studio ? [['studio', 'Studio'] as [Win, string]] : [])];
-  const go = (w: Win) => nav(w === 'work' ? '/today' : w === 'insights' ? '/insights/overview' : '/studio/monitor');
+  const firstStudio = ['monitor', 'okr', 'targets', 'revenue', 'budget', 'strategy', 'resources', 'rescope', 'calendar', 'scorecards', 'projects'].find(k => W.item(k)) || 'monitor';
+  const go = (w: Win) => nav(w === 'work' ? '/today' : w === 'insights' ? '/insights/overview' : '/studio/' + firstStudio);
+  const S = (k: string, el: ReactNode) => ok(W.studio && W.item(k), el);
   const ok = (cond: boolean, el: ReactNode) => cond ? el : <Navigate to="/today" replace />;
   return <div className={'shell win-' + win}>
     <aside className={'side' + (side ? ' open' : '')}>
       <div className="brand"><span>WBG</span>Planning<span className="sp" /><Bell /></div>
+      <div style={{ padding: '0 10px 8px' }}><Search /></div>
       {wins.length > 1 && <div className="winsw" role="tablist" aria-label="Window">{wins.map(([k, l]) => <button key={k} role="tab" aria-selected={win === k} className={win === k ? 'on' : ''} onClick={() => go(k)}>{l}</button>)}</div>}
-      <nav aria-label="Main">{groups.map((g, gi) => <div key={gi} className="navg">{g.label && <div className="navl">{g.label}</div>}{g.items.map(it => <NavLink key={it.to} to={it.to} className={({ isActive }) => 'mod' + (isActive || (it.to === '/goals' && loc.pathname.startsWith('/goals')) ? ' on' : '')}><Ico d={it.icon} /><span>{it.label}</span>{it.badge ? <i className="cnt">{it.badge}</i> : null}</NavLink>)}</div>)}</nav>
+      <nav aria-label="Main">{groups.map((g, gi) => <div key={gi} className="navg">{g.label && <div className="navl">{g.label}</div>}{g.items.map(it => <NavLink key={it.to} to={it.to} className={({ isActive }) => 'mod' + (isActive || (it.to === '/strategy' && loc.pathname.startsWith('/goals')) ? ' on' : '')}><Ico d={it.icon} /><span>{it.label}</span>{it.badge ? <i className="cnt">{it.badge}</i> : null}</NavLink>)}</div>)}</nav>
       <div className="sbot">
         <div className="who"><b>{me.holder_name || me.title}</b>{me.title} · {ROLE_NAME[role]}</div>
         {isAdmin && <SeeAs />}
@@ -116,11 +112,14 @@ function Shell() {
         <Route path="/" element={<Navigate to="/today" replace />} />
         {/* Work window */}
         <Route path="/today" element={<Today />} />
-        <Route path="/week" element={<WeekPage />} />
-        <Route path="/goals" element={<MyGoals />} />
+        <Route path="/strategy" element={<OurStrategy />} />
+        <Route path="/plan" element={<PlanPage />} />
+        <Route path="/record" element={<RecordPage />} />
+        <Route path="/week" element={<Navigate to="/record" replace />} />
+        <Route path="/goals" element={<Navigate to="/strategy" replace />} />
         <Route path="/goals/new" element={<NewObjective />} />
-        <Route path="/deliverables" element={<DeliverablesPage />} />
-        <Route path="/inbox" element={ok(role !== 'employee', <Inbox />)} />
+        <Route path="/deliverables" element={<Navigate to="/plan?tab=deliverables" replace />} />
+        <Route path="/inbox" element={<InboxPage />} />
         <Route path="/me" element={<Me />} />
         {/* Insights window */}
         <Route path="/insights" element={<Navigate to="/insights/overview" replace />} />
@@ -133,30 +132,33 @@ function Shell() {
         <Route path="/insights/people" element={ok(W.insights, <PerfPeople />)} />
         <Route path="/insights/reports" element={ok(W.insights, <Reports />)} />
         <Route path="/insights/group" element={ok(W.insights, <GroupView />)} />
+        <Route path="/insights/projects" element={ok(W.insights, <Portfolio />)} />
         {/* Studio window */}
-        <Route path="/studio" element={<Navigate to="/studio/monitor" replace />} />
-        <Route path="/studio/monitor" element={ok(W.studio, <Monitor />)} />
-        <Route path="/studio/strategy" element={ok(W.studio, <StrategyBuilder />)} />
-        <Route path="/studio/okr" element={ok(W.studio, <OkrPlan />)} />
-        <Route path="/studio/targets" element={ok(W.studio, <GoalsQuarter />)} />
-        <Route path="/studio/revenue" element={ok(W.studio, <RevenuePlan />)} />
-        <Route path="/studio/budget" element={ok(W.studio, <BudgetPlan />)} />
-        <Route path="/studio/resources" element={ok(W.studio, <Resources />)} />
-        <Route path="/studio/rescope" element={ok(W.studio, <Rescope />)} />
-        <Route path="/studio/calendar" element={ok(W.studio, <PlanCalendar />)} />
-        <Route path="/studio/scorecards" element={ok(W.studio, <Scorecards />)} />
+        <Route path="/studio" element={<Navigate to={'/studio/' + firstStudio} replace />} />
+        <Route path="/studio/monitor" element={S('monitor', <Monitor />)} />
+        <Route path="/studio/strategy" element={S('strategy', <StrategyBuilder />)} />
+        <Route path="/studio/okr" element={S('okr', <OkrPlan />)} />
+        <Route path="/studio/targets" element={S('targets', <GoalsQuarter />)} />
+        <Route path="/studio/revenue" element={S('revenue', <RevenuePlan />)} />
+        <Route path="/studio/budget" element={S('budget', <BudgetPlan />)} />
+        <Route path="/studio/resources" element={S('resources', <ResourcesMonthly />)} />
+        <Route path="/studio/rescope" element={S('rescope', <RescopeEditor />)} />
+        <Route path="/studio/projects" element={ok(W.item('projects'), <Portfolio edit />)} />
+        <Route path="/studio/calendar" element={S('calendar', <PlanCalendar />)} />
+        <Route path="/studio/scorecards" element={S('scorecards', <Scorecards />)} />
         <Route path="/studio/framework" element={ok(W.studioAdmin, <Framework />)} />
         <Route path="/studio/people" element={ok(W.studioAdmin, <SettingsPeople />)} />
         <Route path="/studio/import" element={ok(W.studioAdmin, <SettingsImport />)} />
         <Route path="/studio/audit" element={ok(W.studioAdmin, <Audit />)} />
+        <Route path="/studio/backup" element={ok(W.studioAdmin, <Backup />)} />
         {/* old addresses */}
         <Route path="/home" element={<Navigate to="/today" replace />} />
-        <Route path="/work" element={<Navigate to="/week" replace />} />
-        <Route path="/strategy/*" element={<Navigate to="/insights/strategy" replace />} />
+        <Route path="/work" element={<Navigate to="/record" replace />} />
+        <Route path="/strategy/*" element={<Navigate to="/strategy" replace />} />
         <Route path="/plan/okr" element={<Navigate to="/studio/okr" replace />} />
         <Route path="/plan/revenue" element={<Navigate to="/studio/revenue" replace />} />
         <Route path="/plan/rescope" element={<Navigate to="/studio/rescope" replace />} />
-        <Route path="/plan/*" element={<Navigate to="/studio/monitor" replace />} />
+        <Route path="/plan/*" element={<Navigate to="/plan" replace />} />
         <Route path="/performance/*" element={<Navigate to="/me" replace />} />
         <Route path="/reports" element={<Navigate to="/insights/reports" replace />} />
         <Route path="/settings/people" element={<Navigate to="/studio/people" replace />} />

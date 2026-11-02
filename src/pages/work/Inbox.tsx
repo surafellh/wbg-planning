@@ -39,7 +39,15 @@ export function ScorecardEditor({ sc, onClose }: { sc: Row; onClose: () => void 
   </Modal>;
 }
 
-export function Inbox() {
+export function InboxPage() {
+  const { role, db, user } = useData(); const head = role !== 'employee'; const tab = new URLSearchParams(location.search).get('tab') || (head ? 'decisions' : 'messages'); const [t2, setT2] = useState(tab);
+  const unreadMsg = db ? db.messages.filter(m => m.to_user === user.id && !m.read_at).length : 0;
+  return <div className="light"><div className="lhead"><div><h1>Inbox</h1><p>Decisions waiting for you, and messages.</p></div></div>
+    <div className="tabs">{head && <button className={t2 === 'decisions' ? 'on' : ''} onClick={() => setT2('decisions')}>Decisions</button>}<button className={t2 === 'messages' ? 'on' : ''} onClick={() => setT2('messages')}>Messages{unreadMsg ? ` (${unreadMsg})` : ''}</button></div>
+    {t2 === 'decisions' && head ? <Inbox embedded /> : <Messages />}</div>;
+}
+
+export function Inbox({ embedded }: { embedded?: boolean }) {
   const { db, me, role, user, can } = useData(); const save = useSave(); const { t } = useTerms();
   const [acc, setAcc] = useState<Row | null>(null); const [rev, setRev] = useState<Row | null>(null); const [sce, setSce] = useState<Row | null>(null); const [note, setNote] = useState<Record<string, string>>({});
   if (!db || !me) return null;
@@ -57,8 +65,8 @@ export function Inbox() {
     if (await save(() => sb.from('objectives').update({ status: ok ? 'Approved' : 'Returned', approved_by: ok ? user.id : null, approved_at: ok ? new Date().toISOString() : null, review_note: n }).eq('id', o.id), ['objectives'], ok ? 'Approved' : 'Returned'))
       await notifyPositions(db!, [o.owner_position_id], 'okr', `${ok ? 'Approved' : 'Returned'}: ${o.text}`, '/goals', n || undefined);
   }
-  return <div className="light">
-    <div className="lhead"><div><h1>Inbox</h1><p>{total ? `${total} things waiting for you` : 'Nothing waiting — all clear.'}</p></div></div>
+  return <div className={embedded ? '' : 'light'}>
+    <p className="note" style={{ marginBottom: 10 }}>{total ? `${total} things waiting for you` : 'Nothing waiting — all clear.'}</p>
     {objs.length > 0 && <section className="lsec"><h3>{t('objective', true)} to approve · {objs.length}</h3>{objs.map(o => <div key={o.id} className="lcard stack">
       <div className="row"><b style={{ flex: 1 }}>{o.text}</b><span className="note">{posName(db, o.owner_position_id)}</span></div>
       <ul className="mini" style={{ margin: 0 }}>{krsOf(db, o.id).map(k => <li key={k.id}>{k.title} — target {fmt(Number(k.year_target), 1)} {k.uom === 'done' ? '' : k.uom || ''}</li>)}</ul>
@@ -114,12 +122,31 @@ export function Today() {
     {sc && <Link to="/me" className="lbanner">Your Q{p.n} scorecard is ready — review and agree →</Link>}
     {lead && waiting > 0 && <Link to="/inbox" className="lbanner">{waiting} things in your inbox waiting for a decision →</Link>}
     <div className="tiles3">
-      <Link to="/week" className="ltile"><small>This week</small><b>{acts.length ? `${st.done} of ${acts.length} done` : 'Not planned yet'}</b><Bar p={st.completion} /><span>{acts.length ? 'Open my week →' : 'Plan my week →'}</span></Link>
-      <Link to="/goals" className="ltile"><small>My {t('key_result', true).toLowerCase()}</small><b>{toUpdate.length ? `${toUpdate.length} to update` : myKrs.length ? 'All up to date' : 'None yet'}</b><span>{myKrs.length ? 'Open my goals →' : `Create an ${t('objective').toLowerCase()} →`}</span></Link>
-      <Link to="/deliverables" className="ltile"><small>{MONTHS[curMonth() - 1]} {t('deliverable', true).toLowerCase()}</small><b>{dels.length ? `${dels.filter(d => d.status === 'accepted').length} of ${dels.length} accepted` : 'None this month'}</b><span>Open →</span></Link>
+      <Link to="/record?tab=week" className="ltile"><small>This week</small><b>{acts.length ? `${st.done} of ${acts.length} done` : 'Not planned yet'}</b><Bar p={st.completion} /><span>{acts.length ? 'Update my week →' : 'Plan my week →'}</span></Link>
+      <Link to="/strategy" className="ltile"><small>My department's {t('key_result', true).toLowerCase()}</small><b>{toUpdate.length ? `${toUpdate.length} to update` : myKrs.length ? 'All up to date' : 'None yet'}</b><span>See how we are doing →</span></Link>
+      <Link to="/plan?tab=deliverables" className="ltile"><small>{MONTHS[curMonth() - 1]} {t('deliverable', true).toLowerCase()}</small><b>{dels.length ? `${dels.filter(d => d.status === 'accepted').length} of ${dels.length} accepted` : 'None this month'}</b><span>Open →</span></Link>
     </div>
     {acts.length > 0 && <section className="lsec"><h3>This week's priorities</h3><div className="lcard">{acts.filter(a => a.status !== 'Done').sort((a, b) => Number(b.top) - Number(a.top)).slice(0, 5).map(a => <div key={a.id} className="krline"><span style={{ flex: 1 }}>{a.top ? '★ ' : ''}{a.title}</span><Pill tone={a.status === 'Stuck' ? 'bad' : a.status === 'In progress' ? 'warn' : 'none'}>{a.status}</Pill><span className="mini">{a.pct}%</span></div>)}{acts.every(a => a.status === 'Done') && <p className="note">Everything done this week.</p>}</div></section>}
-    {toUpdate.length > 0 && <section className="lsec"><h3>Needs an update</h3><div className="lcard">{toUpdate.slice(0, 5).map(k => <div key={k.id} className="krline"><span style={{ flex: 1 }}>{k.title}</span><Link className="btn sm pri" to="/goals">Update</Link></div>)}</div></section>}
+    {toUpdate.length > 0 && <section className="lsec"><h3>Needs an update</h3><div className="lcard">{toUpdate.slice(0, 5).map(k => <div key={k.id} className="krline"><span style={{ flex: 1 }}>{k.title}</span><Link className="btn sm pri" to="/record?tab=krs">Update</Link></div>)}</div></section>}
     <section className="lsec"><h3>My result · {periodLabel(p)}</h3><Link to="/me" className="lcard row" style={{ textDecoration: 'none', color: 'inherit', gap: 16 }}><Ring p={r.R} size={56} /><span><b>{pct(r.R)} · {bandOf(r.R, db)}</b><div className="mini">{r.basis}</div></span></Link></section>
   </div>;
+}
+
+/** Direct messages between colleagues. */
+export function Messages() {
+  const { db, user, reload } = useData(); const [withU, setWith] = useState<string>(''); const [txt, setTxt] = useState(''); const [q, setQ] = useState('');
+  if (!db) return null;
+  const nameOf = (u: string) => db.positions.find(p => p.user_id === u)?.holder_name || db.profiles.find(p => p.id === u)?.full_name || db.profiles.find(p => p.id === u)?.email || 'Someone';
+  const mine = db.messages.filter(m => m.from_user === user.id || m.to_user === user.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const convs = Array.from(new Set(mine.map(m => m.from_user === user.id ? m.to_user : m.from_user))).map(u => ({ u, last: mine.filter(m => m.from_user === u || m.to_user === u).slice(-1)[0], unread: mine.filter(m => m.from_user === u && !m.read_at).length })).sort((a, b) => b.last.created_at.localeCompare(a.last.created_at));
+  const people = db.positions.filter(p => p.user_id && p.user_id !== user.id && (!q || (p.holder_name || '').toLowerCase().includes(q.toLowerCase())));
+  const thread = mine.filter(m => m.from_user === withU || m.to_user === withU);
+  async function open(u: string) { setWith(u); const ids = mine.filter(m => m.from_user === u && !m.read_at).map(m => m.id); if (ids.length) { await sb.from('messages').update({ read_at: new Date().toISOString() }).in('id', ids); await reload(['messages']); } }
+  async function send() { const b = txt.trim(); if (!b || !withU) return; const { error } = await sb.from('messages').insert({ from_user: user.id, to_user: withU, body: b }); if (!error) { setTxt(''); await sb.rpc('notify', { user_ids: [withU], kind: 'message', title: `Message from ${nameOf(user.id)}`, body: b.slice(0, 140), link: '/inbox?tab=messages' }); await reload(['messages']); } }
+  return <div className="chat"><div className="chatl"><input type="text" placeholder="Find a colleague to message" value={q} onChange={e => setQ(e.target.value)} />
+    {q ? people.slice(0, 20).map(p => <button key={p.id} className="chatc" onClick={() => { open(p.user_id); setQ(''); }}><b>{p.holder_name}</b><small>{p.title}</small></button>)
+      : convs.length ? convs.map(c => <button key={c.u} className={'chatc' + (withU === c.u ? ' on' : '')} onClick={() => open(c.u)}><b>{nameOf(c.u)}{c.unread ? ` (${c.unread})` : ''}</b><small>{c.last.body.slice(0, 50)}</small></button>) : <p className="note" style={{ padding: 10 }}>No conversations yet — find a colleague above.</p>}</div>
+    <div className="chatr">{!withU ? <p className="note" style={{ padding: 20 }}>Choose a conversation.</p> : <><div className="chath"><b>{nameOf(withU)}</b></div>
+      <div className="chatm">{thread.map(m => <div key={m.id} className={'msg' + (m.from_user === user.id ? ' me' : '')}><div>{m.body}</div><small>{m.created_at.slice(5, 16).replace('T', ' ')}</small></div>)}</div>
+      <div className="row" style={{ padding: 10 }}><input type="text" style={{ flex: 1 }} value={txt} onChange={e => setTxt(e.target.value)} placeholder="Write a message" onKeyDown={e => { if (e.key === 'Enter') send(); }} /><button className="btn pri" onClick={send} disabled={!txt.trim()}>Send</button></div></>}</div></div>;
 }
