@@ -116,7 +116,7 @@ export const STUDIO_ITEMS: Record<string, string[]> = {
   replan: ['super_admin', 'group_strategy', 'unit_head', 'planning_head'],
 };
 export const STUDIO_LABELS: Record<string, string> = { monitor: 'Process monitor', strategy: 'Strategy builder', okr: 'Objective planner', targets: 'Targets & progress', revenue: 'Revenue plan', budget: 'Budget', resources: 'Resources', rescope: 'Rescope & versions', calendar: 'Planning calendar', scorecards: 'Scorecards', projects: 'Project portfolio', replan: 'ERP OKR replan' };
-export const WORK_PAGES: Record<string, string> = { strategy: 'How we cascade', insights_me: 'My insights', plan: 'Plan', record: 'Record', inbox: 'Inbox', me: 'My performance' };
+export const WORK_PAGES: Record<string, string> = { strategy: 'How we cascade', plan: 'Plan', record: 'Record', inbox: 'Inbox', me: 'My performance' };
 /** Optional modules (Studio → Configuration → Modules). */
 export function moduleOn(db: DB | null, k: string) { const m = db?.settings.modules || {}; return m[k]?.enabled !== false; }
 /** Which windows a role can open (configurable in Studio → Framework & rules). */
@@ -128,7 +128,8 @@ export function useWindows() {
   const item = (k: string) => (items[k] || []).includes(role) || (k === 'projects' && pmo);
   const studioAdmin = has('studio_admin', ['super_admin', 'group_strategy']);
   const wp = db?.settings.work_pages || {}; const work = (k: string) => !wp[k] || (wp[k] as string[]).includes(role);
-  return { work, insights: has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']), studio: has('studio', ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head', 'dept_head', 'div_head']), studioAdmin, item: (k: string) => (k === 'projects' && !moduleOn(db, 'projects') ? false : studioAdmin || item(k)) };
+  const full = has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']);
+  return { work, fullInsights: full, insights: full || moduleOn(db, 'member_insights'), insightsAll: has('insights', ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head']), studio: has('studio', ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head', 'dept_head', 'div_head']), studioAdmin, item: (k: string) => (k === 'projects' && !moduleOn(db, 'projects') ? false : studioAdmin || item(k)) };
 }
 /** Who may enter financial actuals: the roles set in Studio → Configuration → Access (default Finance, planners, Group) plus members of the organisations chosen there (e.g. the Finance department). */
 export function canEnterActuals(db: DB | null, me: Row | null, role: string) {

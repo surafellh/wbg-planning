@@ -226,8 +226,8 @@ export function scorecardFor(db: DB, posId: string, p: Period) {
     'own' = the department or division the person sits in; 'unit' = the whole business unit; 'none' = personal work only. */
 export function resultRule(db: DB, level: string): { share: number; source: 'led' | 'own' | 'unit' | 'none' } {
   const rr = db.settings.result_rules || {}; const lv = level === 'group' ? 'unit' : level;
-  const def = { unit: { share: 70, source: 'led' }, department: { share: 60, source: 'led' }, division: { share: 50, source: 'led' }, employee: { share: 30, source: 'own' } } as any;
-  const legacy = db.settings.org_weights?.[lv]; const r = { ...(def[lv] || def.employee), ...(legacy != null ? { share: Number(legacy) } : {}), ...(rr[lv] || {}) };
+  const def = { unit: { share: 70, source: 'led' }, department: { share: 60, source: 'led' }, division: { share: 50, source: 'led' }, employee: { share: 0, source: 'none' } } as any;
+  const legacy = lv !== 'employee' ? db.settings.org_weights?.[lv] : null; const r = { ...(def[lv] || def.employee), ...(legacy != null ? { share: Number(legacy) } : {}), ...(rr[lv] || {}) };
   return { share: Number(r.share), source: r.source };
 }
 const LEVEL_WORD: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
