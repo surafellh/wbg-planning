@@ -251,8 +251,8 @@ a.btn.pri{color:var(--band-ink)}
 .savebar{position:sticky;bottom:12px;z-index:20;display:flex;gap:10px;align-items:center;background:var(--ink);color:var(--bg);border-radius:12px;padding:10px 14px;margin-top:12px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .savebar .btn{background:transparent;color:var(--bg);border-color:color-mix(in srgb,var(--bg) 40%,transparent)}.savebar .btn.pri{background:var(--band);color:var(--band-ink);border-color:var(--band)}
 /* ---------- tooltips ---------- */
-[data-tip]{position:relative}
-[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;top:100%;margin-top:4px;z-index:80;background:var(--ink);color:var(--bg);font-size:12px;font-weight:500;line-height:1.4;padding:7px 10px;border-radius:8px;width:max-content;max-width:320px;white-space:pre-line;text-transform:none;letter-spacing:0;box-shadow:0 6px 20px rgba(0,0,0,.25);pointer-events:none}
+.tiplayer{position:fixed;z-index:200;background:var(--ink);color:var(--bg);font-size:12px;font-weight:500;line-height:1.45;padding:7px 10px;border-radius:8px;width:max-content;max-width:min(340px,calc(100vw - 24px));white-space:pre-line;text-transform:none;letter-spacing:0;box-shadow:0 6px 20px rgba(0,0,0,.3);pointer-events:none;opacity:0;transition:opacity .08s}
+.tiplayer.on{opacity:1}
 th[data-tip]{text-decoration:underline dotted;text-underline-offset:3px}
 /* ---------- floating help ---------- */
 .helpfloat{position:fixed;right:20px;bottom:20px;width:min(400px,calc(100vw - 32px));max-height:min(60vh,560px);background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.25);z-index:70;display:flex;flex-direction:column}
