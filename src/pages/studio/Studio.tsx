@@ -71,7 +71,7 @@ function PillarModal({ init, unit, group, onClose }: { init: Row; unit: string; 
       <button className="btn pri" disabled={!f.name?.trim()} onClick={async () => { const row: Row = { code: f.code || null, name: f.name.trim(), description: f.description || null, outcomes: f.outcomes || null, sort: f.sort ?? 99 }; if (!group) row.unit_id = unit;
         if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
 }
-function GoalModal({ init, unit, group, onClose }: { init: Row; unit: string; group: boolean; onClose: () => void }) {
+export function GoalModal({ init, unit, group, onClose }: { init: Row; unit: string; group: boolean; onClose: () => void }) {
   const { db } = useData(); const save = useSave(); const [f, setF] = useState<Row>(init);
   const linked0 = db && init.id ? db.objectives.filter(o => o.unit_goal_id === init.id && o.status !== 'Archived').map(o => o.id) : [];
   const [objs, setObjs] = useState<string[]>(linked0); const [busy, setBusy] = useState(false);

@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
 import { objScore, objState, krsOf, krState, childObjectives, liveObj, currentPeriod, periodLabel, pct, fmt, orgScoreOwn, orgScore, MONTHS, curMonth, qOfMonth, qMonths, personResult, bandOf, workStats, weekStart, ymd, weekLabel, delivScore, subtreeIds, ownShare, krDrivers, type Period } from '../../lib/calc';
-import { HowItWorks, Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
+import { UnitPicker, HowItWorks, Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
 import { unitGoalsTree, goalScore, pillarScore, statusCounts } from '../Goals';
 import { isHead, headedOrgs } from './Plan';
 import { teamOf } from '../Work';
@@ -15,17 +15,21 @@ const LEVEL: Record<string, string> = { unit: 'Unit', department: 'Department', 
 function kidsOf(db: DB, o: Row) { const ks = new Set(krsOf(db, o.id, true).map(k => k.id)); return db.objectives.filter(c => c.level !== 'individual' && liveObj(c) && (c.parent_objective_id === o.id || (c.parent_kr_id && ks.has(c.parent_kr_id)))); }
 
 export function OurStrategy() {
-  const { db, me, role } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [scope, setScope] = useState<'mine' | 'unit'>('mine'); const [open, setOpen] = useState<Set<string>>(new Set());
+  const { db, me, role, unit: selUnit } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [scope, setScope] = useState<'mine' | 'unit'>('mine'); const [open, setOpen] = useState<Set<string>>(new Set());
   const rel = useMemo(() => { if (!db || !me) return { chain: new Set<string>(), below: new Set<string>() };
     const chain = new Set<string>(); let o = byId(db.org_units, me.org_unit_id); while (o && o.kind !== 'group') { chain.add(o.id); o = byId(db.org_units, o.parent_id); }
     return { chain, below: isHead(role) ? headedOrgs(db, me, role) : new Set<string>([me.org_unit_id]) }; }, [db, me, role]);
   if (!db || !me) return null;
-  const myOrg = byId(db.org_units, me.org_unit_id);
+  // group-level people (CEO, Group Strategy) have no unit cascade of their own: follow the unit chosen at the top
+  const atGroup = byId(db.org_units, me.unit_id)?.kind === 'group' || !db.unit_pillars.some(x => x.unit_id === me.unit_id) && !db.objectives.some(o => o.unit_id === me.unit_id);
+  const uid = atGroup && selUnit ? selUnit : me.unit_id; const viewUnit = atGroup && uid !== me.unit_id;
+  const myOrg = viewUnit ? byId(db.org_units, uid) : byId(db.org_units, me.org_unit_id);
   // an objective is on "my" cascade when it belongs to my organisation, one above it, or (for heads) one below; a branch shows when anything on it is mine
-  const onPath = (o: Row): boolean => scope === 'unit' || rel.chain.has(o.org_unit_id) || rel.below.has(o.org_unit_id);
+  const onPath = (o: Row): boolean => scope === 'unit' || viewUnit || rel.chain.has(o.org_unit_id) || rel.below.has(o.org_unit_id);
   const relevant = (o: Row, d = 0): boolean => d < 8 && (rel.below.has(o.org_unit_id) || o.org_unit_id === me.org_unit_id || kidsOf(db, o).some(c => relevant(c, d + 1)));
-  const show = (o: Row) => scope === 'unit' || relevant(o);
-  const tree = unitGoalsTree(db, me.unit_id).map(({ p: pil, goals }) => ({ pil, goals: goals.map(g => ({ g, objs: db.objectives.filter(o => o.unit_goal_id === g.id && o.level !== 'individual' && liveObj(o)).filter(show) })).filter(x => x.objs.length) })).filter(x => x.goals.length);
+  const show = (o: Row) => scope === 'unit' || viewUnit || relevant(o);
+  const tree = unitGoalsTree(db, uid).map(({ p: pil, goals }) => ({ pil, goals: goals.map(g => ({ g, objs: db.objectives.filter(o => o.unit_goal_id === g.id && o.level !== 'individual' && liveObj(o)).filter(show) })).filter(x => x.objs.length) })).filter(x => x.goals.length);
+  const loose = db.objectives.filter(o => o.unit_id === uid && o.level !== 'individual' && liveObj(o) && !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id).filter(show);
   const toggle = (id: string) => setOpen(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const q = qOfMonth(curMonth());
   const myDels = (o: Row) => { const ks = new Set(krsOf(db, o.id).map(k => k.id)); return db.deliverables.filter(d => d.owner_position_id === me.id && d.status !== 'removed' && qMonths(q).includes(d.month) && (d.objective_id === o.id || ks.has(d.key_result_id))); };
@@ -44,14 +48,17 @@ export function OurStrategy() {
   };
   return <div className="light wide">
     <div className="lhead"><div><h1>How we cascade</h1><p>From the pillar and strategic goal down to {myOrg?.name} and your own {t('deliverable', true).toLowerCase()}: each level's {t('objective', true).toLowerCase()} deliver the one above, and their scores roll up.<HowItWorks><h3>What this page is for</h3><p>How your work connects to the strategy: <b>pillar → strategic goal → unit objective → department → division → your deliverables</b>. Each objective shows its key results and, under each key result, the deliverables and weekly activities that drive it.</p><p>Use <b>My structure</b> for the chain you belong to, or <b>Whole unit</b> to see every department. Scores are for the current quarter.</p></HowItWorks></p></div>
-      <div className="row"><Seg value={scope} options={[['mine', 'My structure'], ['unit', 'Whole unit']]} onChange={setScope} /><PeriodPicker value={p} onChange={setP} /></div></div>
+      <div className="row">{atGroup ? <UnitPicker /> : <Seg value={scope} options={[['mine', 'My structure'], ['unit', 'Whole unit']]} onChange={setScope} />}<PeriodPicker value={p} onChange={setP} /></div></div>
     <div className="clegend"><span><b>Pillar</b> → <b>strategic goal</b> → <b>unit</b> {t('objective', true).toLowerCase()} → <b>department</b> → <b>division</b> → <b>you</b></span><span className="mini">Click an {t('objective').toLowerCase()} to open its {t('key_result', true).toLowerCase()}. Your organisation is highlighted. The ring is the score for {periodLabel(p)}.</span></div>
-    {!tree.length ? <Empty>No cascade for {myOrg?.name} yet — its {t('objective', true).toLowerCase()} are not linked to a strategic goal. {isHead(role) ? 'Link them in Studio → Objective planner.' : 'Your manager links them when planning.'}</Empty> :
+    {!tree.length && !loose.length ? <Empty>No cascade for {myOrg?.name} yet — it has no {t('objective', true).toLowerCase()} linked to a strategic goal. {isHead(role) ? 'Link them in Studio → Objective planner.' : 'Your manager links them when planning.'}</Empty> :
       tree.map(({ pil, goals }) => <section key={pil.id} className="cpil">
         <div className="cpilh"><Ring p={pillarScore(db, pil.id, p)} size={34} /><span><small>{t('pillar')}</small><b>{pil.code} · {pil.name}</b></span></div>
         {goals.map(({ g, objs }) => <div key={g.id} className="cgoal"><div className="cgoalh"><Ring p={goalScore(db, g.id, p)} size={30} /><span><small>{t('goal')}</small><b>{g.code} {g.name}</b></span></div>
           <div className="ckids">{objs.map(o => <Obj key={o.id} o={o} depth={0} />)}</div></div>)}
       </section>)}
+    {loose.length > 0 && <section className="cpil"><div className="cpilh"><span><small>Not linked yet</small><b>{loose.length} {t('objective', true).toLowerCase()} not yet linked to a strategic goal or to an {t('objective').toLowerCase()} above</b></span></div>
+      <p className="note" style={{ margin: '4px 0 8px' }}>{isHead(role) ? 'Link each one in Studio → Objective planner (edit the objective, choose the goal or the objective it delivers).' : 'Your manager links these when planning.'}</p>
+      <div className="ckids">{loose.map(o => <Obj key={o.id} o={o} depth={0} />)}</div></section>}
   </div>;
 }
 
