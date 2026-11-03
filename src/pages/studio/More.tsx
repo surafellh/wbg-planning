@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useData, useSave, byId, TABLES, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
-import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt } from '../../lib/calc';
+import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt, needLines, type NeedLine } from '../../lib/calc';
 import { Page, Cmd, Seg, Pill, Empty, Modal, NumIn } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { SaveBar, applyTargetChanges } from '../work/Plan';
@@ -60,33 +60,39 @@ export function RescopeEditor() {
 
 /* ---------- Resources: month-by-month funds, payment scheduling and priorities ---------- */
 export function ResourcesMonthly() {
-  const { db, unit, can } = useData(); const save = useSave(); const [m, setM] = useState(curMonth()); const [busy, setBusy] = useState(false);
+  const { db, unit, can } = useData(); const save = useSave(); const [m, setM] = useState(curMonth()); const [busy, setBusy] = useState(false); const [open, setOpen] = useState<Set<string>>(new Set());
   const fm = db && unit ? db.fund_months.find(f => f.unit_id === unit && f.month === m) : null;
   const qf = db && unit ? db.funds.find(f => f.unit_id === unit && f.quarter === qOfMonth(m)) : null;
   const funds = { confirmed: fm ? Number(fm.confirmed) : qf ? Number(qf.confirmed) / 3 : 0, expected: fm ? Number(fm.expected) : qf ? Number(qf.expected) / 3 : 0 };
   const source = useMemo(() => {
     if (!db || !unit) return [];
-    const groups = new Map<string, Row>();
-    linesOf(db, unit).filter(l => ['cos', 'opex', 'capex', 'proj'].includes(l.section)).forEach(l => { const key = `${l.section}|${l.line_group || 'Other'}`; const g = groups.get(key) || { key, sec: l.section, grp: l.line_group || 'Other', amt: 0, must: l.section === 'opex' || !!l.must_pay }; g.amt += lineVals(l)[m - 1]; g.must = g.must || l.section === 'opex'; groups.set(key, g); });
-    const rank0 = (k: string) => db.need_priority.find(n => n.unit_id === unit && n.need_key === k)?.rank ?? 99;
-    const rows: Row[] = Array.from(groups.values()).filter(g => g.amt > 0).map(g => { const s = db.need_schedule.find(x => x.unit_id === unit && x.need_key === g.key && x.plan_month === m);
-      return { id: s?.id, key: g.key, plan_month: m, need: g.grp, sec: SECN[g.sec], planned: g.amt, pay_month: String(s?.pay_month ?? m), amount: s?.amount ?? g.amt, rank: s?.rank ?? (g.must ? 0 : rank0(g.key)), status: s?.status || 'Scheduled', must: g.must ? 'committed' : '', carried: '' }; });
+    const { groups } = needLines(db, unit, [m], { confirmed: 0, expected: 0 });
+    const row = (n: NeedLine, gRank: number): Row => { const s = db.need_schedule.find(x => x.unit_id === unit && x.need_key === n.key && x.plan_month === m);
+      return { id: s?.id, key: n.key, gkey: n.must ? 'committed' : n.gkey, grank: n.must ? -1 : gRank, plan_month: m, need: n.line.name, grp: n.grp, sec: SECN[n.sec], planned: n.amount, base: n.base, pay_month: String(s?.pay_month ?? m), amount: s?.amount ?? n.amount, rank: s?.rank ?? n.rank, status: s?.status || 'Scheduled', must: n.must ? 'committed' : '', carried: '' }; };
+    const rows: Row[] = groups.flatMap((g, gi) => [...g.committed.map(n => row(n, gi)), ...g.lines.map(n => row(n, gi))]);
     // amounts deferred from earlier months into this one
-    db.need_schedule.filter(x => x.unit_id === unit && x.plan_month < m && x.pay_month === m && x.status !== 'Cancelled').forEach(x => rows.push({ id: x.id, key: x.need_key, plan_month: x.plan_month, need: x.need_key.split('|')[1], sec: SECN[x.need_key.split('|')[0]], planned: Number(x.amount), pay_month: String(m), amount: Number(x.amount), rank: x.rank ?? 50, status: x.status, must: '', carried: `from ${MONTHS[x.plan_month - 1]}` }));
-    return rows.sort((a, b) => Number(!!b.must) - Number(!!a.must) || (a.rank ?? 99) - (b.rank ?? 99));
+    db.need_schedule.filter(x => x.unit_id === unit && x.plan_month < m && x.pay_month === m && x.status !== 'Cancelled').forEach(x => { const [sec, grp, lid] = x.need_key.split('|'); const l = lid ? byId(db.plan_lines, lid) : null; const gi = groups.findIndex(g => g.key === `${sec}|${grp}`);
+      rows.push({ id: x.id, key: x.need_key, gkey: `${sec}|${grp}`, grank: gi < 0 ? 999 : gi, plan_month: x.plan_month, need: l?.name || grp, grp, sec: SECN[sec], planned: Number(x.amount), base: Number(x.amount), pay_month: String(m), amount: Number(x.amount), rank: x.rank ?? 50, status: x.status, must: '', carried: `from ${MONTHS[x.plan_month - 1]}` }); });
+    return rows.sort((a, b) => a.grank - b.grank || (Number(a.rank) || 0) - (Number(b.rank) || 0));
   }, [db, unit, m]);
   const d = useDraft(source, [source]);
   if (!db || !unit) return null;
-  // waterline over what is paid THIS month, in priority order
-  const paying = d.rows.filter(r => Number(r.pay_month) === m && !['Deferred', 'Cancelled'].includes(r.status)).sort((a, b) => Number(!!b.must) - Number(!!a.must) || (Number(a.rank) || 0) - (Number(b.rank) || 0));
+  // waterline over what is paid THIS month: committed lines first, then groups in priority order, lines in their order
+  const paying = d.rows.filter(r => Number(r.pay_month) === m && !['Deferred', 'Cancelled'].includes(r.status)).sort((a, b) => a.grank - b.grank || (Number(a.rank) || 0) - (Number(b.rank) || 0));
   let run = 0; const tier = new Map<Row, string>(); paying.forEach(r => { run += Number(r.amount) || 0; tier.set(r, run <= funds.confirmed ? 'Funded' : run <= funds.confirmed + funds.expected ? 'Conditional' : 'Backlog'); });
   const tot = (t: string) => sum(paying.filter(r => tier.get(r) === t).map(r => Number(r.amount)));
   const deferred = sum(d.rows.filter(r => Number(r.pay_month) > m || r.status === 'Deferred').map(r => Number(r.amount)));
-  const cols: Col[] = [{ key: 'need', label: 'Need (budget group)', type: 'ro', width: 200 }, { key: 'sec', label: 'Section', type: 'ro', width: 130 }, { key: 'carried', label: 'Carried', type: 'ro', width: 90 },
-    { key: 'planned', label: `${MONTHS[m - 1]} planned`, type: 'ro', width: 110, fmt: v => money(v) },
+  // grouped, collapsible view: a header per budget group, its lines when open
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const view: Row[] = []; const idx: number[] = []; let last = '';
+  d.rows.forEach((r, i) => { if (r.gkey !== last) { last = r.gkey; const mem = d.rows.filter(x => x.gkey === r.gkey); const on = open.has(r.gkey); const fundedN = mem.filter(x => tier.get(x) === 'Funded').length;
+      view.push({ _header: <button className="hbtn" onClick={() => toggle(r.gkey)}>{on ? '▾' : '▸'} {r.gkey === 'committed' ? 'Committed costs (paid first)' : `${r.grp} · ${r.sec}`} <span className="mini" style={{ fontWeight: 400 }}>— {mem.length} line{mem.length > 1 ? 's' : ''} · {money(sum(mem.map(x => Number(x.amount) || 0)))} · {fundedN} funded</span></button> }); idx.push(-1); }
+    if (open.has(r.gkey)) { view.push(r); idx.push(i); } });
+  const cols: Col[] = [{ key: 'need', label: 'Budget line', type: 'ro', width: 230, fmt: (v, r) => <span>{v}{r.gkey === 'committed' && <span className="mini"> · {r.grp}</span>}</span> }, { key: 'carried', label: 'Carried', type: 'ro', width: 90 },
+    { key: 'planned', label: `${MONTHS[m - 1]} planned`, type: 'ro', width: 120, fmt: (v, r) => <span title={Math.abs(v - r.base) > 0.5 ? `Rescoped · original ${money(r.base)}` : undefined}>{money(v)}{Math.abs(v - r.base) > 0.5 ? ' ✎' : ''}</span>, tip: 'The plan in force: after an approved rescope this is the rescoped amount (✎).' },
     { key: 'pay_month', label: 'Pay in', type: 'select', options: MONTHS.map((x, i) => [String(i + 1), x] as [string, string]).filter(([k]) => Number(k) >= m), width: 90, tip: 'Schedule the payment for this month or push it to a later month.' },
-    { key: 'amount', label: 'Amount to pay', type: 'number', width: 120 }, { key: 'rank', label: 'Priority', type: 'number', width: 80, tip: 'Lower number = paid first. Committed costs (salaries, operating costs) always come first.' },
-    { key: 'must', label: 'Committed', type: 'ro', width: 90 }, { key: 'status', label: 'Status', type: 'select', options: [['Scheduled', 'Scheduled'], ['Paid', 'Paid'], ['Deferred', 'Deferred'], ['Cancelled', 'Cancelled']], width: 110 },
+    { key: 'amount', label: 'Amount to pay', type: 'number', width: 120 }, { key: 'rank', label: 'Order in group', type: 'number', width: 100, tip: 'Lower number = paid first inside its budget group. The order of the groups is set on the Quarter waterline view.' },
+    { key: 'status', label: 'Status', type: 'select', options: [['Scheduled', 'Scheduled'], ['Paid', 'Paid'], ['Deferred', 'Deferred'], ['Cancelled', 'Cancelled']], width: 110 },
     { key: 'tier', label: 'Waterline', type: 'ro', width: 100, fmt: (_, r) => { const t = tier.get(r); return t ? <Pill tone={t === 'Funded' ? 'good' : t === 'Conditional' ? 'warn' : 'bad'}>{t}</Pill> : Number(r.pay_month) > m ? `→ ${MONTHS[Number(r.pay_month) - 1]}` : ''; } }];
   async function doSave() {
     setBusy(true); let err: string | null = null;
@@ -95,19 +101,20 @@ export function ResourcesMonthly() {
     await save(() => Promise.resolve({ error: err }) as any, ['need_schedule'], 'Schedule saved'); setBusy(false);
   }
   const setFund = (k: 'confirmed' | 'expected', v: number | null) => save(() => sb.from('fund_months').upsert({ unit_id: unit, fiscal_year: '2026/27', month: m, confirmed: k === 'confirmed' ? v || 0 : funds.confirmed, expected: k === 'expected' ? v || 0 : funds.expected }), ['fund_months'], 'Funds updated');
-  return <Page title="Resources" desc="Month by month: the money available, what gets paid, in what order, and what is pushed to a later month." help={<>
-    <p>Each month lists the planned spending by budget group (from the annual plan), plus anything deferred from earlier months. <b>Committed costs</b> are paid first; the rest follows the <b>priority</b> you set (lower = first). Use <b>Pay in</b> to schedule a payment for a later month — it moves to that month's list automatically.</p>
-    <p>The <b>waterline</b> compares the running total with the month's funds: <b>Funded</b> (within confirmed money), <b>Conditional</b> (only if expected money arrives), <b>Backlog</b> (not covered — defer, cut or rescope). Funds default to a third of the quarter's funds until you set the month's own figures.</p></>}>
-    <Cmd right={<select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select>} />
+  const keys = Array.from(new Set(d.rows.map(r => r.gkey)));
+  return <Page title="Resources" desc="Month by month: the money available, which lines get paid, in what order, and what is pushed to a later month." help={<>
+    <p>Each month lists the planned spending line by line, grouped by budget group, plus anything deferred from earlier months. Open a group to work on its lines; not every line in a group has to be paid. <b>Committed lines</b> (marked "must pay") are paid first; then the groups in the order set on the Quarter waterline view, and inside each group the lines by <b>Order in group</b>. Use <b>Pay in</b> to push a payment to a later month.</p>
+    <p>Amounts are the plan in force — after an approved rescope, the rescoped amount (marked ✎). The <b>waterline</b> compares the running total with the month's funds: <b>Funded</b>, <b>Conditional</b> (only if expected money arrives), <b>Backlog</b> (not covered — defer, cut or rescope). Funds default to a third of the quarter's funds until you set the month's own figures.</p></>}>
+    <Cmd right={<><button className="btn sm" onClick={() => setOpen(new Set(open.size ? [] : keys))}>{open.size ? 'Collapse all' : 'Expand all'}</button><select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select></>} />
     <div className="kpis">
       <div className="tile good"><div className="tv">{money(funds.confirmed)}</div><div className="tl">Confirmed funds</div>{can('editPlan') && <div className="ts">Set: <NumIn value={Math.round(funds.confirmed)} onChange={v => setFund('confirmed', v)} w={120} /></div>}</div>
       <div className="tile warn"><div className="tv">{money(funds.expected)}</div><div className="tl">Expected funds</div>{can('editPlan') && <div className="ts">Set: <NumIn value={Math.round(funds.expected)} onChange={v => setFund('expected', v)} w={120} /></div>}</div>
       <div className="tile"><div className="tv">{money(sum(paying.map(r => Number(r.amount))))}</div><div className="tl">To pay this month</div><div className="ts">Funded {money(tot('Funded'))} · Conditional {money(tot('Conditional'))}</div></div>
       <div className={'tile ' + (tot('Backlog') ? 'bad' : 'good')}><div className="tv">{money(tot('Backlog'))}</div><div className="tl">Below the waterline</div></div>
       <div className="tile"><div className="tv">{money(deferred)}</div><div className="tl">Pushed to later months</div></div></div>
-    {!d.rows.length ? <Empty>No planned spending in {MONTHS[m - 1]}.</Empty> : <Sheet cols={cols} rows={d.rows} onChange={d.change} readOnly={!can('editPlan')} />}
+    {!d.rows.length ? <Empty>No planned spending in {MONTHS[m - 1]}.</Empty> : <Sheet cols={cols} rows={view} onChange={(i, k, v) => idx[i] >= 0 && d.change(idx[i], k, v)} readOnly={!can('editPlan')} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
-    <p className="note">Quarter view: {pct(tot('Funded') / Math.max(1, sum(paying.map(r => Number(r.amount)))))} of this month's payments are funded.</p>
+    <p className="note">{pct(tot('Funded') / Math.max(1, sum(paying.map(r => Number(r.amount)))))} of this month's payments are funded.</p>
   </Page>;
 }
 

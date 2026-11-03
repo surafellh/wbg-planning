@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useData, useSave, useTerms, byId, posName, notifyPositions, managerOf, canEnterActuals, moduleOn, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
-import { cutoffLabel, FY, monthStart, MONTHS, curMonth, qOfMonth, weekStart, weekLabel, ymd, cutoffOf, krState, currentPeriod, krTarget, monthlyValues, linesOf, planBy, actualBy, money, fmt, pct } from '../../lib/calc';
+import { cutoffLabel, FY, monthStart, MONTHS, curMonth, qOfMonth, weekStart, weekLabel, ymd, cutoffOf, krState, currentPeriod, krTarget, monthlyValues, linesOf, planBy, actualBy, lineActual, lineVals, lineQty, sum, money, fmt, pct } from '../../lib/calc';
 import { Seg, Empty, Pill, UnitPicker } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf, WeekReview, TeamView, MonthView, CheckIns, Blockers } from '../Work';
@@ -145,26 +145,42 @@ function FinancialActuals() {
     {k === 'pl' ? <PlActuals /> : k === 'cash' ? <CashMonthly /> : <CashWeekly />}</div>;
 }
 function PlActuals() {
-  const { db, unit } = useData(); const save = useSave(); const [m, setM] = useState(Math.max(1, curMonth() - 1)); const [busy, setBusy] = useState(false);
+  const { db, unit } = useData(); const save = useSave(); const [m, setM] = useState(Math.max(1, curMonth() - 1)); const [busy, setBusy] = useState(false); const [open, setOpen] = useState<Set<string>>(new Set());
   const source = useMemo(() => { if (!db || !unit) return []; const out: Row[] = [];
-    (['rev', 'cos', 'opex', 'capex'] as const).forEach(sec => { const groups = Array.from(new Set(linesOf(db, unit, sec).map(l => l.line_group || 'Other'))); groups.forEach(g => out.push({ id: sec + '|' + g, sec, grp: g, plan: planBy(db, unit, sec, [m], [g]), actual: actualBy(db, unit, sec, [m], [g]) })); });
+    (['rev', 'cos', 'opex', 'capex'] as const).forEach(sec => { const ls = linesOf(db, unit, sec); const groups = Array.from(new Set(ls.map(l => l.line_group || 'Other')));
+      groups.forEach(g => { const grow = db.actuals.find(a => a.unit_id === unit && a.section === sec && a.line_group === g && a.month === m && !a.line_id);
+        out.push({ id: 'g|' + sec + '|' + g, kind: 'g', sec, grp: g, name: g, plan: planBy(db, unit, sec, [m], [g]), actual: grow?.value != null ? Number(grow.value) : null });
+        ls.filter(l => (l.line_group || 'Other') === g).sort((a, b) => (a.sort || 0) - (b.sort || 0)).forEach(l => { const q = lineQty(l)[m - 1]; const isQ = l.kind === 'qty' || !!q;
+          out.push({ id: l.id, kind: 'l', sec, grp: g, name: l.name, uom: isQ ? l.uom || '' : '', isQ, qplan: isQ ? q : null, qact: lineActual(db, l.id, [m], 'quantity'), plan: lineVals(l)[m - 1], actual: lineActual(db, l.id, [m]) }); }); }); });
     return out; }, [db, unit, m]);
   const d = useDraft(source, [source]);
   if (!db || !unit) return null;
   const SEC: Record<string, string> = { rev: 'Revenue', cos: 'Cost of sales', opex: 'Operating expenses (incl. depreciation and financial charges lines)', capex: 'Capital spending' };
-  const rows: Row[] = []; const idx: number[] = []; let last = ''; d.rows.forEach((r, i) => { if (r.sec !== last) { rows.push({ _header: SEC[r.sec] }); idx.push(-1); last = r.sec; } rows.push(r); idx.push(i); });
-  const cols: Col[] = [{ key: 'grp', label: 'Product group / budget line', type: 'ro', width: 300 }, { key: 'plan', label: `${MONTHS[m - 1]} plan`, type: 'ro', width: 130, fmt: v => money(v) },
-    { key: 'actual', label: `${MONTHS[m - 1]} actual (ETB)`, type: 'number', width: 150, tip: 'Paste a column from the Power BI or ERP export straight into this column.' },
-    { key: 'v', label: 'Achieved', type: 'ro', width: 90, fmt: (_, r) => r.actual != null && r.plan ? pct(r.actual / r.plan) : '' }];
+  const lineSum = (g: Row) => { const v = d.rows.filter(r => r.kind === 'l' && r.sec === g.sec && r.grp === g.grp && r.actual != null); return v.length ? sum(v.map(r => Number(r.actual))) : null; };
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const rows: Row[] = []; const idx: number[] = []; let last = '';
+  d.rows.forEach((r, i) => { if (r.sec !== last) { rows.push({ _header: SEC[r.sec] }); idx.push(-1); last = r.sec; } if (r.kind === 'g' || open.has('g|' + r.sec + '|' + r.grp)) { rows.push(r); idx.push(i); } });
+  const cols: Col[] = [{ key: 'name', label: 'Product group / budget line', type: 'ro', width: 300, fmt: (v, r) => r.kind === 'g' ? <button className="hbtn" onClick={() => toggle(r.id)}>{open.has(r.id) ? '▾' : '▸'} {v}</button> : <span style={{ paddingLeft: 16 }}>{v}</span> },
+    { key: 'uom', label: 'Unit', type: 'ro', width: 70 },
+    { key: 'qplan', label: 'Qty plan', type: 'ro', width: 90, fmt: v => v == null ? '' : fmt(v, 0) },
+    { key: 'qact', label: 'Qty actual', type: 'number', width: 100, editable: r => r.kind === 'l' && r.isQ, tip: 'Quantity sold, produced or bought — for lines planned by quantity.' },
+    { key: 'plan', label: `${MONTHS[m - 1]} plan (ETB)`, type: 'ro', width: 130, fmt: v => money(v) },
+    { key: 'actual', label: `${MONTHS[m - 1]} actual (ETB)`, type: 'number', width: 150, editable: r => r.kind === 'l' || lineSum(r) == null, fmt: (v, r) => { if (r.kind === 'g') { const ls = lineSum(r); if (ls != null) return <span title="Worked out from the lines">{fmt(ls, 0)} <span className="mini">from lines</span></span>; } return v == null ? '' : fmt(v, 0); },
+      tip: 'Enter one figure for the whole group, or open the group and enter each line. When lines have figures, the group total is worked out from them. Paste a column from the Power BI or ERP export.' },
+    { key: 'v', label: 'Achieved', type: 'ro', width: 90, fmt: (_, r) => { const a = r.kind === 'g' ? lineSum(r) ?? r.actual : r.actual; return a != null && r.plan ? pct(a / r.plan) : ''; } }];
   async function doSave() {
-    setBusy(true); let err: string | null = null;
+    setBusy(true); let err: string | null = null; const base = { unit_id: unit, fiscal_year: '2026/27', month: m, source: 'Entered in the app' };
     for (const r of d.all.filter(r => r._dirty)) {
-      await sb.from('actuals').delete().match({ unit_id: unit, fiscal_year: '2026/27', section: r.sec, line_group: r.grp, month: m }).is('line_id', null);
-      if (r.actual != null) { const x = await sb.from('actuals').insert({ unit_id: unit, fiscal_year: '2026/27', section: r.sec, line_group: r.grp, month: m, value: r.actual, source: 'Entered in the app' }); err = err || x.error?.message || null; }
+      if (r.kind === 'g') { await sb.from('actuals').delete().match({ unit_id: unit, fiscal_year: '2026/27', section: r.sec, line_group: r.grp, month: m }).is('line_id', null);
+        if (r.actual != null) { const x = await sb.from('actuals').insert({ ...base, section: r.sec, line_group: r.grp, value: r.actual }); err = err || x.error?.message || null; } }
+      else { await sb.from('actuals').delete().match({ unit_id: unit, line_id: r.id, month: m });
+        if (r.actual != null || r.qact != null) { const x = await sb.from('actuals').insert({ ...base, section: r.sec, line_group: r.grp, line_id: r.id, value: r.actual, qty: r.qact }); err = err || x.error?.message || null; } }
     }
     await save(() => Promise.resolve({ error: err }) as any, ['actuals'], `${MONTHS[m - 1]} actuals saved`); setBusy(false);
   }
-  return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Enter last month's actuals by product group and budget line before the month closes. Key results linked to the plan, the income statement and the dashboards update from these figures.</p><select value={m} onChange={e => setM(Number(e.target.value))} aria-label="Month">{MONTHS.slice(0, curMonth()).map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select></div>
+  const groupKeys = d.rows.filter(r => r.kind === 'g').map(r => r.id);
+  return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Enter last month's actuals before the month closes — one figure per product group or budget group, or open a group (▸) and enter each line, with quantities for lines planned by quantity. Key results linked to the plan, the income statement and the dashboards update from these figures.</p>
+    <button className="btn sm" onClick={() => setOpen(new Set(open.size ? [] : groupKeys))}>{open.size ? 'Collapse all' : 'Open all lines'}</button><select value={m} onChange={e => setM(Number(e.target.value))} aria-label="Month">{MONTHS.slice(0, curMonth()).map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select></div>
     {!rows.length ? <Empty>This unit has no revenue or budget lines in its annual plan.</Empty> : <Sheet cols={cols} rows={rows} onChange={(i, k, v) => idx[i] >= 0 && d.change(idx[i], k, v)} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></div>;
 }

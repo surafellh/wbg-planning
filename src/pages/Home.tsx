@@ -6,6 +6,7 @@ import { Page, Pill, Bar, Ring, BarChart, LineChart, StatusStack, usePeriod, Per
 import { planStatus } from './OkrPlan';
 import { openRescope } from './AnnualPlan';
 import { statusCounts, unitKrs } from './Goals';
+import { OrgRows, ExpandAll, useOpen, rowScore, subtreeKrs, orgKids } from '../lib/orgtree';
 
 function todosFor(db: DB, me: Row, unit: string, can: (c: string) => boolean): [string, string, string][] {
   const todos: [string, string, string][] = [];
@@ -75,19 +76,32 @@ export function Operational({ db, unit, p }: { db: DB; unit: string; p: Period }
     </div>
     <div className="drill"><div><h4>OKR score by month</h4><LineChart labels={MONTHS.slice(0, curMonth())} series={[{ name: 'Score', values: trend.map(v => v == null ? null : v * 100), color: 'var(--accent)' }]} fmtY={v => Math.round(v) + '%'} height={150} /></div>
       <div><h4>Off track — {periodLabel(p)}</h4>{behind.length ? behind.map(({ k, s }) => <div key={k.id} className="lg row"><span style={{ flex: 1 }}>{k.title}<div className="mini">{byId(db.objectives, k.objective_id)?.text}</div></span><Bar p={s.progress} /><StatePill s={s} /></div>) : <p className="note">Nothing off track.</p>}</div></div>
+    <ByDepartment db={db} unit={unit} p={p} />
   </div>;
 }
 
+/** The unit's departments and divisions, collapsed until asked for. */
+function ByDepartment({ db, unit, p }: { db: DB; unit: string; p: Period }) {
+  const [show, setShow] = useState(false); const { open, tg } = useOpen(); const kids = orgKids(db, unit); if (!kids.length) return null; const wk = ymd(weekStart(new Date()));
+  return <div style={{ marginTop: 10 }}><button className="btn sm" onClick={() => setShow(!show)}>{show ? '▾ Hide departments' : `▸ By department (${kids.length})`}</button>
+    {show && <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Department · division</th><th>OKR score</th><th>Key results</th><th>Deliverables · {MONTHS[curMonth() - 1]}</th><th>This week's work</th></tr></thead><tbody>
+      <OrgRows db={db} ids={kids.map(k => k.id)} open={open} tg={tg} depth={0} sub={o => o.kind} cells={o => { const ids = subtreeIds(db, o.id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id)); const sc = rowScore(db, o.id, p); const krs = subtreeKrs(db, o.id); const dm = delivScore(db, pos, { t: 'M', n: curMonth() }); const ws = workStats(db, pos, wk);
+        return <><td>{sc == null ? <span className="mini">no objectives of its own</span> : <><Bar p={sc} /> {pct(sc)}</>}</td><td style={{ minWidth: 200 }}>{krs.length ? <StatusStack counts={statusCounts(db, krs, p)} compact /> : <span className="mini">—</span>}</td><td>{dm.due ? `${dm.accepted}/${dm.due}` : '—'}</td><td>{ws.total ? `${pct(ws.completion)} · ${ws.people} people` : <span className="note">none logged</span>}</td></>; }} />
+    </tbody></table></div>}</div>;
+}
+
 export function GroupBoard({ db, p }: { db: DB; p: Period }) {
-  const { units, setUnit } = useData(); const nav = useNavigate(); const wk = ymd(weekStart(new Date()));
-  const rows = units.map(u => { const ids = subtreeIds(db, u.id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id)); const last = lastActualMonth(db, u.id); const ms = Array.from({ length: Math.max(last, 1) }, (_, i) => i + 1);
-    const rp = planBy(db, u.id, 'rev', ms), ra = actualBy(db, u.id, 'rev', ms); const ws = workStats(db, pos, wk);
-    const man = unitKrs(db, u.id).filter(k => k.measure === 'manual'); const fresh = man.length ? man.filter(k => db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString())).length / man.length : null;
-    return { u, score: orgScore(db, u.id, p), rev: rp ? (ra || 0) / rp : null, ws, counts: statusCounts(db, unitKrs(db, u.id), p), fresh }; });
-  return <div className="card"><h2>Units at a glance · {periodLabel(p)}</h2><div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Unit</th><th data-tip="Average score of the unit's own (unit-level) objectives for the period. Each objective's score combines its key results and, through the cascade, the department and division objectives below it.">OKR score</th><th data-tip="Status of all organisation key results (unit, department and division), judged on pace through the period. Personal ERP objectives are not counted.">Key results</th><th data-tip="Share of check-in key results updated in the last 30 days.">Updated</th><th>Revenue to date</th><th>This week's work</th></tr></thead><tbody>
-    {rows.map(r => <tr key={r.u.id} className="click" onClick={() => { setUnit(r.u.id); nav('/insights/map'); }}><td><b>{r.u.name}</b><div className="mini">{r.u.unit_type === 'business' ? 'Business unit' : 'Function'}</div></td>
-      <td><Bar p={r.score} /> {pct(r.score)}</td><td style={{ minWidth: 220 }}><StatusStack counts={r.counts} compact /></td><td>{pct(r.fresh)}</td><td>{r.rev == null ? <span className="note">no revenue plan</span> : <><Bar p={r.rev} /> {pct(r.rev)}</>}</td><td>{r.ws.total ? `${pct(r.ws.completion)} · ${r.ws.people} people` : <span className="note">none logged</span>}</td></tr>)}
-  </tbody></table></div></div>;
+  const { units, setUnit } = useData(); const nav = useNavigate(); const wk = ymd(weekStart(new Date())); const { open, setOpen, tg } = useOpen();
+  const rowOf = (id: string) => { const o = byId(db.org_units, id)!; const isU = o.kind === 'unit'; const ids = subtreeIds(db, id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id)); const last = lastActualMonth(db, id); const ms = Array.from({ length: Math.max(last, 1) }, (_, i) => i + 1);
+    const rp = isU ? planBy(db, id, 'rev', ms) : 0, ra = isU ? actualBy(db, id, 'rev', ms) : null; const ws = workStats(db, pos, wk); const krs = isU ? unitKrs(db, id) : subtreeKrs(db, id);
+    const man = krs.filter(k => k.measure === 'manual'); const fresh = man.length ? man.filter(k => db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString())).length / man.length : null;
+    return { isU, score: rowScore(db, id, p), rev: rp ? (ra || 0) / rp : null, ws, counts: statusCounts(db, krs, p), fresh }; };
+  const ids = units.map(u => u.id);
+  return <div className="card"><div className="row"><h2 style={{ flex: 1 }}>Units at a glance · {periodLabel(p)}</h2><ExpandAll db={db} ids={ids} open={open} setOpen={setOpen} /></div><div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Unit · department · division</th><th data-tip="Unit: average score of its own (unit-level) objectives, which take in the cascade below them. Department or division: the score of its own objectives.">OKR score</th><th data-tip="Status of the organisation key results (for a unit: unit, department and division), judged on pace through the period. Personal ERP objectives are not counted.">Key results</th><th data-tip="Share of check-in key results updated in the last 30 days.">Updated</th><th>Revenue to date</th><th>This week's work</th></tr></thead><tbody>
+    <OrgRows db={db} ids={ids} open={open} tg={tg} sub={o => o.kind === 'unit' ? (o.unit_type === 'business' ? 'Business unit' : 'Function') : o.kind} onRow={o => { if (o.kind === 'unit') { setUnit(o.id); nav('/insights/map'); } else tg(o.id); }} cells={o => { const r = rowOf(o.id);
+      return <><td>{r.score == null ? <span className="mini">{r.isU ? '—' : 'no objectives of its own'}</span> : <><Bar p={r.score} /> {pct(r.score)}</>}</td><td style={{ minWidth: 220 }}>{r.counts.some(c => c.n) ? <StatusStack counts={r.counts} compact /> : <span className="mini">—</span>}</td><td>{pct(r.fresh)}</td>
+        <td>{!r.isU ? <span className="mini">unit level</span> : r.rev == null ? <span className="note">no revenue plan</span> : <><Bar p={r.rev} /> {pct(r.rev)}</>}</td><td>{r.ws.total ? `${pct(r.ws.completion)} · ${r.ws.people} people` : <span className="note">none logged</span>}</td></>; }} />
+  </tbody></table></div><p className="mini" style={{ marginTop: 6 }}>Open a unit (▸) for its departments and divisions; click a unit's name to go to its strategy map.</p></div>;
 }
 
 export default function Home() {

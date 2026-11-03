@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Targets } from './work/Plan';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
@@ -206,13 +207,20 @@ export function GoalsMap() {
 }
 
 export function GoalsQuarter() {
-  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [lvl, setLvl] = useState<'unit' | 'all'>('all'); const [view, setView] = useState<'Q' | 'M'>('Q'); const [org, setOrg] = useState(''); const [q, setQ] = useState('');
+  const { db, unit, can } = useData(); const [kr, setKr] = useState<string | null>(null); const [lvl, setLvl] = useState<'unit' | 'all'>('all'); const [view, setView] = useState<'Q' | 'M'>('Q'); const [org, setOrg] = useState(''); const [q, setQ] = useState(''); const [mode, setMode] = useState<'follow' | 'edit'>('follow');
   if (!db || !unit) return null;
+  const canEdit = can('editOKR') || can('approve');
   const sub = org ? subtreeIds(db, org) : null;
   const objs = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && o.level !== 'individual' && (lvl === 'all' || o.level === 'unit') && (!sub || sub.has(o.org_unit_id)) && (!q || o.text.toLowerCase().includes(q.toLowerCase()) || krsOf(db, o.id).some(k => k.title.toLowerCase().includes(q.toLowerCase()))));
   const cols: Period[] = view === 'Q' ? [1, 2, 3, 4].map(n => ({ t: 'Q', n })) : Array.from({ length: 12 }, (_, i) => ({ t: 'M', n: i + 1 }));
-  return <Page title="Targets & progress" desc="Every key result with its target and actual for each quarter or month." help={<p>Each cell shows actual / target for that period, coloured by status. Targets come from the OKR plan (annual, quarterly or monthly entry); key results measured from the annual plan take theirs from the revenue plan or budget. Click a row for detail and check-ins.</p>}>
-    <Cmd right={<><input type="text" placeholder="Search objectives or key results" value={q} onChange={e => setQ(e.target.value)} /><OrgFilter value={org} onChange={setOrg} /><Seg value={view} options={[['Q', 'Quarters'], ['M', 'Months']]} onChange={setView} /><Seg value={lvl} options={[['unit', 'Unit only'], ['all', 'All levels']]} onChange={setLvl} /></>} />
+  const help = <><h3>What this page is for</h3><p><b>Follow progress</b> is the scoreboard: every key result with its <b>actual / target</b> for each quarter or month, coloured by status (green on track, amber behind, red off track — judged on pace). Use it to spot which results are slipping and in which period. Click a row for its detail, check-ins and the deliverables and activities that drive it.</p>
+    <p><b>Edit targets</b> is where the quarterly or monthly targets are entered or corrected, like a spreadsheet. Once the OKR plan is approved, changes go to Group Strategy as a change request (Studio → Rescope) instead of changing straight away.</p>
+    <p>Not everything has an editable target: key results measured from the annual plan take theirs from the revenue plan or budget (change those through a rescope); key results scored from the objectives below have no target of their own. Actuals are not typed here — they come from check-ins (Work → Record → Key results), accepted deliverables, or Finance actuals.</p></>;
+  if (mode === 'edit') return <Page title="Targets & progress" desc="Enter or correct the quarterly and monthly targets of the unit's key results." help={help}>
+    <Cmd right={<><OrgFilter value={org} onChange={setOrg} /><Seg value={mode} options={[['follow', 'Follow progress'], ['edit', 'Edit targets']]} onChange={setMode} /></>} />
+    <Targets unitId={unit} orgId={org || undefined} /></Page>;
+  return <Page title="Targets & progress" desc="Every key result with its target and actual for each quarter or month — and where to change targets." help={help}>
+    <Cmd right={<>{canEdit && <Seg value={mode} options={[['follow', 'Follow progress'], ['edit', 'Edit targets']]} onChange={setMode} />}<input type="text" placeholder="Search objectives or key results" value={q} onChange={e => setQ(e.target.value)} /><OrgFilter value={org} onChange={setOrg} /><Seg value={view} options={[['Q', 'Quarters'], ['M', 'Months']]} onChange={setView} /><Seg value={lvl} options={[['unit', 'Unit only'], ['all', 'All levels']]} onChange={setLvl} /></>} />
     <div className="tw"><table className="t"><thead><tr><th className="first">Objective / key result</th><th>Owner</th><th className="n">Year target</th>{cols.map(c => <th key={c.t + c.n} className="n">{periodLabel(c)}</th>)}<th>Year</th></tr></thead><tbody>
       {objs.map(o => [<tr key={o.id} className="g"><td className="first" colSpan={3 + cols.length}>{o.text}</td><td>{pct(objScore(db, o, { t: 'Y', n: 1 }))}</td></tr>,
         ...krsOf(db, o.id).map(k => { const ys = krState(db, k, { t: 'Y', n: 1 });

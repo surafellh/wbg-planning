@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData, byId, moduleOn, type DB, type Row } from '../lib/data';
-import { incomeStatement, cashFlow, MONTHS, money, pct, lastActualMonth, sum, periodMonths, periodLabel, orgScore, objScore, krsOf, krState, subtreeIds, workStats, delivScore, weekStart, ymd, weekLabel, personResult, bandOf, planBy, actualBy, linesOf, avg, curMonth, IS_KEY, lineVals, type Period } from '../lib/calc';
+import { incomeStatement, cashFlow, MONTHS, money, pct, lastActualMonth, sum, periodMonths, periodLabel, orgScore, objScore, krsOf, krState, subtreeIds, workStats, delivScore, weekStart, ymd, weekLabel, personResult, bandOf, planBy, actualBy, linesOf, avg, curMonth, IS_KEY, lineVals, lineQty, lineActual, fmt, type Period } from '../lib/calc';
 import { Page, Seg, UnitPicker, Empty, PeriodPicker, usePeriod, BarChart, LineChart, StatusStack, Bar, StatePill, Ring } from '../lib/ui';
 import { statusCounts, unitKrs, unitGoalsTree, goalScore, pillarScore } from './Goals';
+import { OrgRows, ExpandAll, useOpen, rowScore, subtreeKrs } from '../lib/orgtree';
 
 function csv(name: string, rows: (string | number | null | undefined)[][]) {
   const s = rows.map(r => r.map(v => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }).join(',')).join('\n');
@@ -12,17 +13,22 @@ function csv(name: string, rows: (string | number | null | undefined)[][]) {
 const Export = ({ name, rows }: { name: string; rows: () => (string | number | null | undefined)[][] }) => <button className="btn sm" onClick={() => csv(name, rows())}>Export CSV</button>;
 
 function Summary({ db, us, p }: { db: DB; us: string[]; p: Period }) {
-  const rows = us.map(u => { const ids = subtreeIds(db, u); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name).map(x => x.id)); const last = lastActualMonth(db, u); const ms = periodMonths(p).filter(m => m <= Math.max(last, 0));
-    const rp = ms.length ? planBy(db, u, 'rev', ms) : 0, ra = ms.length ? actualBy(db, u, 'rev', ms) : null; const op = ms.length ? planBy(db, u, 'opex', ms) : 0, oa = ms.length ? actualBy(db, u, 'opex', ms) : null;
-    const people = db.positions.filter(x => pos.has(x.id)); const results = people.map(x => personResult(db, x, p).R).filter(v => v != null) as number[];
-    return { u: byId(db.org_units, u)!, score: orgScore(db, u, p), counts: statusCounts(db, unitKrs(db, u), p), rev: rp ? (ra || 0) / rp : null, opex: op ? (oa || 0) / op : null, deliv: delivScore(db, pos, p), avgR: results.length ? sum(results) / results.length : null }; });
+  const { open, setOpen, tg } = useOpen();
+  const rowOf = (id: string) => { const o = byId(db.org_units, id)!; const isU = o.kind === 'unit'; const ids = subtreeIds(db, id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name).map(x => x.id)); const u = o.unit_id || id;
+    const last = lastActualMonth(db, u); const ms = periodMonths(p).filter(m => m <= Math.max(last, 0));
+    const rp = isU && ms.length ? planBy(db, u, 'rev', ms) : 0, ra = isU && ms.length ? actualBy(db, u, 'rev', ms) : null; const op = isU && ms.length ? planBy(db, u, 'opex', ms) : 0, oa = isU && ms.length ? actualBy(db, u, 'opex', ms) : null;
+    const results = db.positions.filter(x => pos.has(x.id)).map(x => personResult(db, x, p).R).filter(v => v != null) as number[];
+    return { o, isU, score: rowScore(db, id, p), counts: statusCounts(db, isU ? unitKrs(db, id) : subtreeKrs(db, id), p), rev: rp ? (ra || 0) / rp : null, opex: op ? (oa || 0) / op : null, deliv: delivScore(db, pos, p), avgR: results.length ? sum(results) / results.length : null }; };
+  const rows = us.map(rowOf);
   return <>
-    <div className="kpis">{rows.map(r => <div key={r.u.id} className="tile"><div className="row"><Ring p={r.score} size={48} /><div><b>{r.u.name}</b><div className="mini">OKR score · {periodLabel(p)}</div></div></div></div>)}</div>
-    <div className="row" style={{ marginBottom: 6 }}><h2 style={{ flex: 1 }}>Executive summary · {periodLabel(p)}</h2><Export name="summary" rows={() => [['Unit', 'OKR score', 'Revenue achieved', 'Opex used', 'Deliverables accepted', 'Average person result'], ...rows.map(r => [r.u.name, pct(r.score), pct(r.rev), pct(r.opex), `${r.deliv.accepted}/${r.deliv.due}`, pct(r.avgR)])]} /></div>
-    <div className="tw"><table className="t"><thead><tr><th>Unit</th><th>OKR score</th><th>Key results</th><th>Revenue achieved</th><th>Opex vs budget</th><th>Deliverables</th><th>Avg. person result</th></tr></thead><tbody>
-      {rows.map(r => <tr key={r.u.id}><td><b>{r.u.name}</b></td><td><Bar p={r.score} /> {pct(r.score)}</td><td style={{ minWidth: 220 }}><StatusStack counts={r.counts} compact /></td><td>{r.rev == null ? '—' : pct(r.rev)}</td><td>{r.opex == null ? '—' : pct(r.opex)}</td><td>{r.deliv.due ? `${r.deliv.accepted}/${r.deliv.due}` : '—'}</td><td>{pct(r.avgR)}</td></tr>)}
+    <div className="kpis">{rows.map(r => <div key={r.o.id} className="tile"><div className="row"><Ring p={r.score} size={48} /><div><b>{r.o.name}</b><div className="mini">OKR score · {periodLabel(p)}</div></div></div></div>)}</div>
+    <div className="row" style={{ marginBottom: 6 }}><h2 style={{ flex: 1 }}>Executive summary · {periodLabel(p)}</h2><ExpandAll db={db} ids={us} open={open} setOpen={setOpen} />
+      <Export name="summary" rows={() => [['Organisation', 'Level', 'OKR score', 'Revenue achieved', 'Opex used', 'Deliverables accepted', 'Average person result'], ...us.flatMap(u => Array.from(subtreeIds(db, u))).map(rowOf).map(r => [r.o.name, r.o.kind, pct(r.score), pct(r.rev), pct(r.opex), `${r.deliv.accepted}/${r.deliv.due}`, pct(r.avgR)])]} /></div>
+    <div className="tw"><table className="t"><thead><tr><th>Unit · department · division</th><th data-tip="Unit: its cascaded score. Department or division: the score of its own objectives.">OKR score</th><th>Key results</th><th>Revenue achieved</th><th>Opex vs budget</th><th>Deliverables</th><th>Avg. person result</th></tr></thead><tbody>
+      <OrgRows db={db} ids={us} open={open} tg={tg} cells={o => { const r = rowOf(o.id); return <><td>{r.score == null ? <span className="mini">{r.isU ? '—' : 'no objectives of its own'}</span> : <><Bar p={r.score} /> {pct(r.score)}</>}</td><td style={{ minWidth: 220 }}>{r.counts.some(c => c.n) ? <StatusStack counts={r.counts} compact /> : <span className="mini">—</span>}</td>
+        <td>{r.isU ? (r.rev == null ? '—' : pct(r.rev)) : <span className="mini">unit level</span>}</td><td>{r.isU ? (r.opex == null ? '—' : pct(r.opex)) : <span className="mini">unit level</span>}</td><td>{r.deliv.due ? `${r.deliv.accepted}/${r.deliv.due}` : '—'}</td><td>{pct(r.avgR)}</td></>; }} />
     </tbody></table></div>
-    <p className="note">Financial figures cover only months with Finance actuals.</p>
+    <p className="note">Open a unit (▸) to see its departments and divisions. Financial figures are kept per unit and cover only months with Finance actuals.</p>
   </>;
 }
 
@@ -44,15 +50,15 @@ function OkrReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
 }
 
 function OrgReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
-  const orgs = us.flatMap(u => Array.from(subtreeIds(db, u))).map(id => byId(db.org_units, id)!).filter(o => db.objectives.some(x => x.org_unit_id === o.id));
-  const rows = orgs.map(o => { const ids = subtreeIds(db, o.id); const pos = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name); const rs = pos.map(x => personResult(db, x, p).R).filter(v => v != null) as number[]; const d = delivScore(db, new Set(pos.map(x => x.id)), p);
-    return { o, s: orgScore(db, o.id, p), q: [1, 2, 3, 4].map(q => orgScore(db, o.id, { t: 'Q', n: q })), people: pos.length, avgR: rs.length ? sum(rs) / rs.length : null, d }; }).sort((a, b) => (b.s ?? -1) - (a.s ?? -1));
+  const { open, setOpen, tg } = useOpen();
+  const rowOf = (id: string) => { const o = byId(db.org_units, id)!; const ids = subtreeIds(db, id); const pos = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name); const rs = pos.map(x => personResult(db, x, p).R).filter(v => v != null) as number[]; const d = delivScore(db, new Set(pos.map(x => x.id)), p);
+    return { o, s: rowScore(db, id, p), q: [1, 2, 3, 4].map(q => rowScore(db, id, { t: 'Q', n: q })), people: pos.length, avgR: rs.length ? sum(rs) / rs.length : null, d }; };
   const people = us.flatMap(u => db.positions.filter(x => x.unit_id === u && x.holder_name)); const bands = ['Achieved', 'Well performed', 'Partially achieved', 'Under performed'].map(b => ({ label: b, n: people.filter(x => bandOf(personResult(db, x, p).R, db) === b).length, tone: b.startsWith('Ach') || b.startsWith('Well') ? 'good' : b.startsWith('Part') ? 'warn' : 'bad' }));
   return <>
     <div className="card" style={{ marginBottom: 12 }}><h3>People by band · {periodLabel(p)}</h3><StatusStack counts={bands} /></div>
-    <div className="row" style={{ marginBottom: 6 }}><h2 style={{ flex: 1 }}>Units, departments and divisions</h2><Export name="organisation" rows={() => [['Organisation', 'Level', 'Score', 'Q1', 'Q2', 'Q3', 'Q4', 'People', 'Avg result', 'Deliverables accepted'], ...rows.map(r => [r.o.name, r.o.kind, pct(r.s), ...r.q.map(v => pct(v)), r.people, pct(r.avgR), `${r.d.accepted}/${r.d.due}`])]} /></div>
+    <div className="row" style={{ marginBottom: 6 }}><h2 style={{ flex: 1 }}>Units, departments and divisions</h2><ExpandAll db={db} ids={us} open={open} setOpen={setOpen} /><Export name="organisation" rows={() => [['Organisation', 'Level', 'Score', 'Q1', 'Q2', 'Q3', 'Q4', 'People', 'Avg result', 'Deliverables accepted'], ...us.flatMap(u => Array.from(subtreeIds(db, u))).map(rowOf).map(r => [r.o.name, r.o.kind, pct(r.s), ...r.q.map(v => pct(v)), r.people, pct(r.avgR), `${r.d.accepted}/${r.d.due}`])]} /></div>
     <div className="tw"><table className="t"><thead><tr><th>Organisation</th><th>{periodLabel(p)}</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th className="n">People</th><th>Avg. result</th><th>Deliverables</th></tr></thead><tbody>
-      {rows.map(r => <tr key={r.o.id}><td><b>{r.o.name}</b><div className="mini">{r.o.kind} · {byId(db.org_units, r.o.unit_id)?.name}</div></td><td><Bar p={r.s} /> {pct(r.s)}</td>{r.q.map((v, i) => <td key={i}>{pct(v)}</td>)}<td className="n">{r.people}</td><td>{pct(r.avgR)}</td><td>{r.d.due ? `${r.d.accepted}/${r.d.due}` : '—'}</td></tr>)}
+      <OrgRows db={db} ids={us} open={open} tg={tg} cells={o => { const r = rowOf(o.id); return <><td>{r.s == null ? <span className="mini">{o.kind === 'unit' ? '—' : 'no objectives of its own'}</span> : <><Bar p={r.s} /> {pct(r.s)}</>}</td>{r.q.map((v, i) => <td key={i}>{pct(v)}</td>)}<td className="n">{r.people}</td><td>{pct(r.avgR)}</td><td>{r.d.due ? `${r.d.accepted}/${r.d.due}` : '—'}</td></>; }} />
     </tbody></table></div>
     <PeopleTable db={db} us={us} p={p} />
   </>;
@@ -110,11 +116,17 @@ function WorkByOrg({ db, us, weeks }: { db: DB; us: string[]; weeks: Date[] }) {
     </tbody></table></div></>;
 }
 
+/** Lines of a group across the units in scope, with plan, baseline, actual and quantities for the months. */
+function lineItems(db: DB, us: string[], sec: string, grp: string, months: number[]) {
+  return us.flatMap(u => linesOf(db, u, sec).filter(l => (l.line_group || 'Other') === grp).map(l => { const isQ = l.kind === 'qty' || lineQty(l).some(x => x);
+    return { l, u, base: sum(months.map(m => lineVals(l, true)[m - 1])), plan: sum(months.map(m => lineVals(l)[m - 1])), act: lineActual(db, l.id, months), qplan: isQ ? sum(months.map(m => lineQty(l)[m - 1])) : null, qact: isQ ? lineActual(db, l.id, months, 'quantity') : null }; }));
+}
 type Basis = 'ytd' | 'q1' | 'q2' | 'q3' | 'q4' | 'year' | 'month';
 const TIP: Record<string, string> = { base: 'The original approved annual plan.', plan: 'Plan in force: the baseline plus approved rescopes.', act: 'Actuals recorded by Finance (Work → Record → Financial actuals).', var: 'Actual − plan. Red when it hurts profit (revenue below plan or cost above plan).', ach: 'Actual ÷ plan.' };
 function Financial({ db, us, name }: { db: DB; us: string[]; name: string }) {
   const [tab, setTab] = useState<'is' | 'mis' | 'co' | 'cos' | 'cf' | 'wcf' | 'trend' | 'lines'>('is'); const [per, setPer] = useState<Basis>('ytd');
-  const [cmp, setCmp] = useState<'plan' | 'mom' | 'qoq' | 'ytd'>('plan'); const [detail, setDetail] = useState(true); const [misKind, setMisKind] = useState<'act' | 'plan'>('act');
+  const [cmp, setCmp] = useState<'plan' | 'mom' | 'qoq' | 'ytd'>('plan'); const [detail, setDetail] = useState(true); const [misKind, setMisKind] = useState<'act' | 'plan'>('act'); const [openG, setOpenG] = useState<Set<string>>(new Set());
+  const tg = (k: string) => setOpenG(x => { const n = new Set(x); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const last = Math.max(1, ...us.map(u => lastActualMonth(db, u))); const [mon, setMon] = useState(last);
   const rng = (a: number, b: number) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
   const months = per === 'ytd' ? rng(1, last) : per === 'year' ? rng(1, 12) : per === 'month' ? [mon] : periodMonths({ t: 'Q', n: Number(per[1]) });
@@ -127,7 +139,8 @@ function Financial({ db, us, name }: { db: DB; us: string[]; name: string }) {
       {tab === 'is' && <Seg value={cmp} options={[['plan', 'Plan vs actual'], ['mom', 'MoM'], ['qoq', 'QoQ'], ['ytd', 'YTD']]} onChange={setCmp} />}<span className="sp" />
       {((tab === 'is' && cmp === 'plan') || tab === 'lines' || tab === 'co' || tab === 'cos') && <Seg value={per} options={[['ytd', `YTD (${MONTHS[last - 1]})`], ['month', 'Month'], ['q1', 'Q1'], ['q2', 'Q2'], ['q3', 'Q3'], ['q4', 'Q4'], ['year', 'Year']]} onChange={setPer} />}
       {(per === 'month' || (tab === 'is' && cmp === 'mom')) && <select value={mon} onChange={e => setMon(Number(e.target.value))} aria-label="Month">{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>}
-      {(tab === 'is' || tab === 'mis') && <label className="mini row" style={{ gap: 4 }}><input type="checkbox" checked={detail} onChange={e => setDetail(e.target.checked)} />Line detail</label>}</div>
+      {(tab === 'is' || tab === 'mis') && <label className="mini row" style={{ gap: 4 }}><input type="checkbox" checked={detail} onChange={e => setDetail(e.target.checked)} />Group detail</label>}</div>
+    {tab === 'is' && cmp === 'plan' && detail && <p className="note" style={{ marginTop: 0 }}>Click a product or budget group to see its lines.</p>}
 
     {tab === 'is' && (() => {
       if (cmp === 'plan') { const rows = incomeStatement(db, us, months, detail); const K = (k: string) => IS_KEY(rows, k); const rev = K('rev'), gp = K('gp'), ebit = K('ebit'), ni = K('ni');
@@ -139,8 +152,9 @@ function Financial({ db, us, name }: { db: DB; us: string[]; name: string }) {
             <div className={'tile ' + (ni.act != null && ni.act < 0 ? 'bad' : 'good')}><div className="tv">{money(ni.act)}</div><div className="tl">Net income</div><div className="ts">plan {money(ni.plan)}</div></div></div>
           <div className="row" style={{ marginBottom: 6 }}><span className="sp" /><Export name="income-statement" rows={() => [['Line', 'Baseline', 'Plan in force', 'Actual', 'Variance'], ...rows.map(r => [r.label, r.base, r.plan, r.act, r.act == null ? null : r.act - r.plan])]} /></div>
           <div className="tw"><table className="t"><thead><tr><th>{name}</th><th className="n" data-tip={TIP.base}>Baseline</th><th className="n" data-tip={TIP.plan}>Plan in force</th><th className="n" data-tip={TIP.act}>Actual</th><th className="n" data-tip={TIP.var}>Variance</th><th className="n" data-tip={TIP.ach}>Achieved</th></tr></thead><tbody>
-            {rows.map((r, i) => { const v = r.act == null ? null : r.act - r.plan;
-              return <tr key={r.label + i} className={r.bold ? 'b' : ''}><td className={r.indent ? 'ind' : ''}>{r.label}</td><td className="n">{money(r.base)}</td><td className="n">{money(r.plan)}</td><td className="n">{money(r.act)}</td><td className={'n' + vtone(r, v)}>{money(v)}</td><td className="n">{r.act != null && r.plan ? pct(r.act / r.plan) : ''}</td></tr>; })}
+            {rows.map((r, i) => { const v = r.act == null ? null : r.act - r.plan; const gk = r.sec ? r.sec + '|' + r.grp : ''; const on = gk && openG.has(gk);
+              return [<tr key={r.label + i} className={(r.bold ? 'b' : '') + (gk ? ' click' : '')} onClick={gk ? () => tg(gk) : undefined}><td className={r.indent ? 'ind' : ''}>{gk ? (on ? '▾ ' : '▸ ') : ''}{r.label}</td><td className="n">{money(r.base)}</td><td className="n">{money(r.plan)}</td><td className="n">{money(r.act)}</td><td className={'n' + vtone(r, v)}>{money(v)}</td><td className="n">{r.act != null && r.plan ? pct(r.act / r.plan) : ''}</td></tr>,
+                ...(on ? lineItems(db, us, r.sec!, r.grp!, months).filter(x => x.plan || x.act).map(x => { const lv = x.act == null ? null : x.act - x.plan; return <tr key={x.l.id} className="mini"><td className="ind" style={{ paddingLeft: 40 }}>{x.l.name}{us.length > 1 ? ` · ${unitName(x.u)}` : ''}{x.qplan != null && <span className="mini"> — qty {fmt(x.qact, 0)} / {fmt(x.qplan, 0)} {x.l.uom || ''}</span>}</td><td className="n">{money(x.base)}</td><td className="n">{money(x.plan)}</td><td className="n">{x.act == null ? <span title="Finance recorded this group as one figure">group only</span> : money(x.act)}</td><td className={'n' + vtone(r, lv)}>{money(lv)}</td><td className="n">{x.act != null && x.plan ? pct(x.act / x.plan) : ''}</td></tr>; }) : [])]; })}
           </tbody></table></div></>; }
       // period-on-period analysis on actuals
       const qOf = (m: number) => Math.ceil(m / 3); const cq = qOf(last);
@@ -197,9 +211,14 @@ function Financial({ db, us, name }: { db: DB; us: string[]; name: string }) {
       return <div className="drill">{([['rev', 'Revenue', 'var(--accent)'], ['gp', 'Gross profit', 'var(--good)'], ['opex', 'Operating expenses', 'var(--bad)'], ['ni', 'Net income', 'var(--accent)']] as const).map(([k, l, c]) =>
         <div key={k} className="card"><h3>{l}</h3><BarChart labels={MONTHS} series={[{ name: 'Plan', values: S(k, false), color: 'var(--line2)' }, { name: 'Actual', values: S(k, true), color: c }]} fmtY={money} /></div>)}</div>; })()}
 
-    {tab === 'lines' && (() => { const rows = ['rev', 'cos', 'opex', 'capex'].flatMap(sec => Array.from(new Set(us.flatMap(u => linesOf(db, u, sec).map(l => l.line_group || 'Other')))).map(g => { const pl = sum(us.map(u => planBy(db, u, sec, months, [g]))); const av = us.map(u => actualBy(db, u, sec, months, [g])); const a = av.every(x => x == null) ? null : sum(av); return { sec, g, pl, a }; })).filter(r => r.pl || r.a);
-      return <><div className="row" style={{ marginBottom: 6 }}><span className="sp" /><Export name="plan-vs-actual" rows={() => [['Section', 'Group', 'Plan', 'Actual', 'Achieved'], ...rows.map(r => [r.sec, r.g, r.pl, r.a, r.a != null && r.pl ? pct(r.a / r.pl) : ''])]} /></div>
-        <div className="tw"><table className="t"><thead><tr><th>Section</th><th>Product group / budget line</th><th className="n">Plan</th><th className="n">Actual</th><th>Achieved</th></tr></thead><tbody>{rows.map(r => <tr key={r.sec + r.g}><td>{({ rev: 'Revenue', cos: 'Cost of sales', opex: 'Opex', capex: 'Capex' } as Row)[r.sec]}</td><td>{r.g}</td><td className="n">{money(r.pl)}</td><td className="n">{money(r.a)}</td><td>{r.a != null && r.pl ? <><Bar p={r.a / r.pl} tone={r.sec === 'rev' ? undefined : r.a > r.pl ? 'bad' : 'good'} /> {pct(r.a / r.pl)}</> : ''}</td></tr>)}</tbody></table></div></>; })()}
+    {tab === 'lines' && (() => { const SN: Row = { rev: 'Revenue', cos: 'Cost of sales', opex: 'Opex', capex: 'Capex' };
+      const rows = ['rev', 'cos', 'opex', 'capex'].flatMap(sec => Array.from(new Set(us.flatMap(u => linesOf(db, u, sec).map(l => l.line_group || 'Other')))).map(g => { const pl = sum(us.map(u => planBy(db, u, sec, months, [g]))); const av = us.map(u => actualBy(db, u, sec, months, [g])); const a = av.every(x => x == null) ? null : sum(av); return { sec, g, pl, a, items: lineItems(db, us, sec, g, months) }; })).filter(r => r.pl || r.a);
+      const ach = (sec: string, a: number | null, pl: number) => a != null && pl ? <><Bar p={a / pl} tone={sec === 'rev' ? undefined : a > pl ? 'bad' : 'good'} /> {pct(a / pl)}</> : '';
+      return <><div className="row" style={{ marginBottom: 6 }}><span className="mini">Click a group to see its lines. Quantities show for lines planned by quantity.</span><span className="sp" /><button className="btn sm" onClick={() => setOpenG(new Set(openG.size ? [] : rows.map(r => r.sec + '|' + r.g)))}>{openG.size ? 'Collapse all' : 'Expand all'}</button>
+        <Export name="plan-vs-actual-by-line" rows={() => [['Section', 'Group', 'Line', 'Unit', 'Qty plan', 'Qty actual', 'Plan', 'Actual', 'Achieved'], ...rows.flatMap(r => [[r.sec, r.g, '', '', '', '', r.pl, r.a, r.a != null && r.pl ? pct(r.a / r.pl) : ''], ...r.items.map(x => [r.sec, r.g, x.l.name, x.l.uom || '', x.qplan, x.qact, x.plan, x.act, x.act != null && x.plan ? pct(x.act / x.plan) : ''])])]} /></div>
+        <div className="tw"><table className="t"><thead><tr><th>Section</th><th>Product group / budget line</th><th className="n">Qty plan</th><th className="n">Qty actual</th><th className="n">Plan</th><th className="n">Actual</th><th>Achieved</th></tr></thead><tbody>{rows.map(r => { const k = r.sec + '|' + r.g; const on = openG.has(k); const qp = r.items.some(x => x.qplan != null) ? sum(r.items.map(x => x.qplan)) : null; const qa = r.items.some(x => x.qact != null) ? sum(r.items.map(x => x.qact)) : null;
+          return [<tr key={k} className="click" onClick={() => tg(k)}><td>{SN[r.sec]}</td><td><b>{on ? '▾' : '▸'} {r.g}</b> <span className="mini">{r.items.length} lines</span></td><td className="n mini">{qp == null ? '' : fmt(qp, 0)}</td><td className="n mini">{qa == null ? '' : fmt(qa, 0)}</td><td className="n">{money(r.pl)}</td><td className="n">{money(r.a)}</td><td>{ach(r.sec, r.a, r.pl)}</td></tr>,
+            ...(on ? r.items.filter(x => x.plan || x.act || x.qact).map(x => <tr key={x.l.id}><td /><td className="ind mini" style={{ paddingLeft: 28 }}>{x.l.name}{us.length > 1 ? ` · ${unitName(x.u)}` : ''}</td><td className="n mini">{x.qplan == null ? '' : `${fmt(x.qplan, 0)} ${x.l.uom || ''}`}</td><td className="n mini">{x.qact == null ? (x.qplan != null ? '—' : '') : fmt(x.qact, 0)}</td><td className="n mini">{money(x.plan)}</td><td className="n mini">{x.act == null ? <span title="Finance recorded this group as one figure">group only</span> : money(x.act)}</td><td className="mini">{ach(r.sec, x.act, x.plan)}</td></tr>) : [])]; })}</tbody></table></div></>; })()}
     <p className="note">Profit tax is applied at the rate set in Studio → Framework ({Number(db.settings.tax_rate?.rate ?? 30)}%) on positive profit before tax; depreciation and financial charges come from the budget lines named that way.</p>
   </>;
 }
@@ -212,11 +231,11 @@ function CosBreakdown({ db, us, months, name }: { db: DB; us: string[]; months: 
   const rows = groups.map(g => ({ g, pl: sum(us.map(u => planBy(db, u, 'cos', months, [g]))), a: A('cos', g), rp: sum(us.map(u => planBy(db, u, 'rev', months, [g]))), ra: A('rev', g) })).filter(r => r.pl || r.a).sort((a, b) => (b.a ?? b.pl) - (a.a ?? a.pl));
   const tot = { pl: sum(rows.map(r => r.pl)), a: rows.some(r => r.a != null) ? sum(rows.map(r => r.a || 0)) : null };
   if (!rows.length) return <Empty>No cost of sales lines for {name}.</Empty>;
-  return <><div className="row" style={{ marginBottom: 6 }}><span className="mini">Click a group to see its planned cost items.</span><span className="sp" /><Export name="cost-of-sales" rows={() => [['Product group', 'Plan', 'Actual', 'Variance', 'Share of COS', 'Cost ÷ revenue (actual)'], ...rows.map(r => [r.g, r.pl, r.a, r.a == null ? null : r.a - r.pl, tot.a ? pct((r.a || 0) / tot.a) : '', r.ra ? pct((r.a || 0) / r.ra) : ''])]} /></div>
+  return <><div className="row" style={{ marginBottom: 6 }}><span className="mini">Click a group to see its cost lines (line actuals where Finance records them).</span><span className="sp" /><Export name="cost-of-sales" rows={() => [['Product group', 'Plan', 'Actual', 'Variance', 'Share of COS', 'Cost ÷ revenue (actual)'], ...rows.map(r => [r.g, r.pl, r.a, r.a == null ? null : r.a - r.pl, tot.a ? pct((r.a || 0) / tot.a) : '', r.ra ? pct((r.a || 0) / r.ra) : ''])]} /></div>
     <div className="tw"><table className="t"><thead><tr><th>Product group</th><th className="n">Plan</th><th className="n">Actual</th><th className="n" data-tip="Actual − plan; red when cost is above plan.">Variance</th><th className="n" data-tip="This group's share of total actual cost of sales.">Share</th><th className="n" data-tip="Cost of sales ÷ revenue for the same group: 100% − gross margin. Plan figure underneath.">Cost ÷ revenue</th></tr></thead><tbody>
       {rows.map(r => { const v = r.a == null ? null : r.a - r.pl; const items = us.flatMap(u => linesOf(db, u, 'cos').filter(l => (l.line_group || 'Other') === r.g));
         return [<tr key={r.g} className="click" onClick={() => setOpen(open === r.g ? null : r.g)}><td><b>{open === r.g ? '▾' : '▸'} {r.g}</b></td><td className="n">{money(r.pl)}</td><td className="n">{money(r.a)}</td><td className={'n' + (v != null && v > 0 ? ' neg' : '')}>{money(v)}</td><td className="n">{tot.a ? pct((r.a || 0) / tot.a) : ''}</td><td className="n">{r.ra ? pct((r.a || 0) / r.ra) : '—'}<div className="mini">{r.rp ? pct(r.pl / r.rp) : ''}</div></td></tr>,
-          ...(open === r.g ? items.map(l => { const lp = sum(months.map(m => lineVals(l, false)[m - 1])); return <tr key={l.id}><td className="ind mini">{l.name}</td><td className="n mini">{money(lp)}</td><td className="mini" colSpan={4}>actuals are recorded per product group</td></tr>; }) : [])]; })}
+          ...(open === r.g ? items.map(l => { const lp = sum(months.map(m => lineVals(l, false)[m - 1])); return <tr key={l.id}><td className="ind mini">{l.name}</td><td className="n mini">{money(lp)}</td>{(() => { const la = lineActual(db, l.id, months); return <><td className="n mini">{la == null ? 'group only' : money(la)}</td><td className="mini" colSpan={3}>{la != null ? <>{money(la - lp)} vs plan</> : ''}</td></>; })()}</tr>; }) : [])]; })}
       <tr className="b"><td>Total cost of sales</td><td className="n">{money(tot.pl)}</td><td className="n">{money(tot.a)}</td><td className="n">{money(tot.a == null ? null : tot.a - tot.pl)}</td><td /><td /></tr>
     </tbody></table></div></>;
 }
