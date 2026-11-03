@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useData } from './data';
+import { Link, useLocation } from 'react-router-dom';
 import { pct } from './calc';
 
 export function Pill({ tone = 'none', children }: { tone?: string; children: ReactNode }) { return <span className={'pill ' + tone}>{children}</span>; }
@@ -138,3 +139,9 @@ export function StatusStack({ counts, compact }: { counts: { label: string; n: n
     <div className="legend">{counts.map(c => <span key={c.label}><i className={c.tone} />{c.label} {c.n}</span>)}</div></div>;
 }
 export function StatePill({ s }: { s: { label: string; tone: string } }) { return <Pill tone={s.tone}>{s.label}</Pill>; }
+
+/** Two views of one page (e.g. Strategy map / Cascade & owners): tabs that switch route. */
+export function ViewTabs({ items }: { items: [string, string, string?][] }) {
+  const loc = useLocation();
+  return <div className="vtabs">{items.map(([to, label, tip]) => <Link key={to} to={to} className={loc.pathname === to ? 'on' : ''} data-tip={tip}>{label}</Link>)}</div>;
+}

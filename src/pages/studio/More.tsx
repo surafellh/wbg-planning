@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useData, useSave, byId, TABLES, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt, needLines, PAY_PATTERN, type NeedLine } from '../../lib/calc';
-import { Page, Cmd, Seg, Pill, Empty, Modal, NumIn } from '../../lib/ui';
+import { Page, Cmd, Seg, Pill, Empty, Modal, NumIn, LineChart } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { SaveBar, applyTargetChanges } from '../work/Plan';
 import { planStatus } from '../OkrPlan';
@@ -124,7 +124,7 @@ export function ResourcesMonthly() {
 const STATUS: [string, string][] = ['Not started', 'In progress', 'On hold', 'Completed', 'Cancelled'].map(s => [s, s]);
 const RAG: [string, string][] = [['Green', 'Green'], ['Amber', 'Amber'], ['Red', 'Red']];
 export function Portfolio({ edit }: { edit?: boolean }) {
-  const { db, can, unit } = useData(); const save = useSave(); const [scope, setScope] = useState<'all' | 'unit'>(edit || can('seeGroup') ? 'all' : 'unit'); const [busy, setBusy] = useState(false); const [st, setSt] = useState('');
+  const { db, can, unit } = useData(); const save = useSave(); const [scope, setScope] = useState<'all' | 'unit'>(edit || can('seeGroup') ? 'all' : 'unit'); const [busy, setBusy] = useState(false); const [st, setSt] = useState(''); const [pv, setPv] = useState<'register' | 'monthly'>('register');
   const source = useMemo(() => db ? db.pmo_projects.filter(p => (scope === 'all' || p.unit_id === unit) && (!st || p.status === st)).sort((a, b) => (a.unit_code || '').localeCompare(b.unit_code || '') || (a.code || '').localeCompare(b.code || '', undefined, { numeric: true })).map(p => ({ ...p, unit_id: p.unit_id || '' })) : [], [db, scope, unit, st]);
   const d = useDraft(source, [source]);
   if (!db) return null;
@@ -146,11 +146,48 @@ export function Portfolio({ edit }: { edit?: boolean }) {
   }
   const all = d.rows; const cnt = (k: string, v: string) => all.filter(r => r[k] === v).length;
   return <Page title="Project portfolio" desc={edit ? 'Capital, business and digital projects across the Group — maintained by the PMO.' : 'Projects, their status and whether they are on time and on budget.'} help={<p>The portfolio comes from the weekly tracker's project register. The PMO keeps it up to date here (Studio); unit leaders see their own projects in Insights. Link each project to the strategic goal it serves so it shows in the strategy. Overdue = past its (revised) end date and not completed.</p>}>
-    <Cmd right={<>{(edit || can('seeGroup')) && <Seg value={scope} options={[['all', 'All companies'], ['unit', 'Selected unit']]} onChange={setScope} />}<select value={st} onChange={e => setSt(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUS.map(([s]) => <option key={s}>{s}</option>)}</select></>} />
+    <Cmd right={<><Seg value={pv} options={[['register', 'Register'], ['monthly', 'Monthly progress']]} onChange={setPv} />{(edit || can('seeGroup')) && <Seg value={scope} options={[['all', 'All companies'], ['unit', 'Selected unit']]} onChange={setScope} />}<select value={st} onChange={e => setSt(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUS.map(([s]) => <option key={s}>{s}</option>)}</select></>} />
     <div className="kpis"><div className="tile"><div className="tv">{all.length}</div><div className="tl">Projects</div></div><div className="tile good"><div className="tv">{cnt('rag', 'Green')}</div><div className="tl">Green</div></div><div className="tile warn"><div className="tv">{cnt('rag', 'Amber')}</div><div className="tl">Amber</div></div><div className="tile bad"><div className="tv">{cnt('rag', 'Red')}</div><div className="tl">Red</div></div><div className="tile bad"><div className="tv">{all.filter(late).length}</div><div className="tl">Overdue</div></div><div className="tile"><div className="tv">{money(sum(all.map(r => Number(r.budget) || 0)))}</div><div className="tl">Total budget</div></div></div>
-    <Sheet cols={cols} rows={all} onChange={d.change} readOnly={!edit} onAdd={edit ? () => d.add({ name: '', status: 'Not started', rag: 'Green', unit_id: unit } as Row) : undefined} onDelete={edit ? d.remove : undefined} />
-    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
+    {pv === 'monthly' ? <ProjectProgress projects={source} /> : <><Sheet cols={cols} rows={all} onChange={d.change} readOnly={!edit} onAdd={edit ? () => d.add({ name: '', status: 'Not started', rag: 'Green', unit_id: unit } as Row) : undefined} onDelete={edit ? d.remove : undefined} />
+    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></>}
   </Page>;
+}
+
+
+/** Monthly progress per project: record each month's % done, spend and RAG, and see the trend. */
+function ProjectProgress({ projects }: { projects: Row[] }) {
+  const { db, me, role, can } = useData(); const save = useSave(); const cm = curMonth(); const [m, setM] = useState(cm); if (!db || !me) return null;
+  const months = Array.from({ length: cm }, (_, i) => i + 1);
+  const pmo = byId(db.org_units, me.org_unit_id)?.code === 'pmo';
+  const canEdit = (p: Row) => can('approve') || pmo || (['unit_head', 'planning_head', 'finance'].includes(role) && p.unit_id === me.unit_id);
+  const rec = (pid: string, mm: number) => db.pmo_progress.find(r => r.project_id === pid && r.month === mm && r.fiscal_year === '2026/27');
+  const last = (pid: string, mm: number) => { for (let k = mm - 1; k >= 1; k--) { const r = rec(pid, k); if (r) return r; } return null; };
+  async function put(p: Row, field: string, v: any) {
+    const ex = rec(p.id, m); const row = { project_id: p.id, fiscal_year: '2026/27', month: m, [field]: v, updated_at: new Date().toISOString() };
+    const ok = await save(() => ex ? sb.from('pmo_progress').update({ [field]: v, updated_at: row.updated_at }).eq('id', ex.id) : sb.from('pmo_progress').insert(row), ['pmo_progress']);
+    // the latest month also updates the project's current status
+    if (ok && m >= Math.max(0, ...db!.pmo_progress.filter(r => r.project_id === p.id).map(r => r.month))) { const map: Record<string, string> = { progress_pct: 'progress_pct', spent: 'spent', rag: 'rag', note: 'note', status: 'status' }; await sb.from('pmo_projects').update({ [map[field]]: v, updated_at: new Date().toISOString() }).eq('id', p.id); }
+  }
+  const avgBy = months.map(mm => { const xs = projects.map(p => rec(p.id, mm)?.progress_pct).filter(v => v != null).map(Number); return xs.length ? sum(xs) / xs.length : null; });
+  const ragBy = (rg: string) => months.map(mm => projects.some(p => rec(p.id, mm)) ? projects.filter(p => rec(p.id, mm)?.rag === rg).length : null);
+  const tone = (rg?: string) => rg === 'Green' ? 'var(--good-soft)' : rg === 'Amber' ? 'var(--warn-soft)' : rg === 'Red' ? 'var(--bad-soft)' : undefined;
+  return <>
+    <div className="g2" style={{ marginBottom: 12 }}>
+      <div className="card"><h4>Average % done by month</h4><LineChart labels={months.map(x => MONTHS[x - 1])} series={[{ name: '% done', values: avgBy.map(v => v == null ? null : v / 100), color: 'var(--accent, #c9a227)' }]} pctAxis fmtY={v => Math.round(v * 100) + '%'} height={150} /></div>
+      <div className="card"><h4>RAG by month</h4><LineChart labels={months.map(x => MONTHS[x - 1])} series={[{ name: 'Green', values: ragBy('Green'), color: 'var(--good)' }, { name: 'Amber', values: ragBy('Amber'), color: 'var(--warn)' }, { name: 'Red', values: ragBy('Red'), color: 'var(--bad)' }]} height={150} /></div>
+    </div>
+    <div className="row" style={{ marginBottom: 8 }}><b>Record for</b><Seg value={String(m)} options={months.map(x => [String(x), MONTHS[x - 1]] as [string, string])} onChange={v => setM(Number(v))} /><span className="sp" /><span className="note">Type and leave the box — it saves. The latest month also updates the project's current status in the register.</span></div>
+    <div className="tw"><table className="t"><thead><tr><th className="first">Project</th>{months.map(x => <th key={x} className="n" style={x === m ? { background: 'var(--info-soft)' } : undefined}>{MONTHS[x - 1]}</th>)}<th className="n">{MONTHS[m - 1]} % done</th><th className="n">Spent to date</th><th>RAG</th><th>Update</th></tr></thead><tbody>
+      {projects.map(p => { const r = rec(p.id, m); const prev = last(p.id, m); const ed = canEdit(p);
+        return <tr key={p.id}><td className="first">{p.code ? p.code + ' · ' : ''}{p.name}<div className="mini">{byId(db.org_units, p.unit_id)?.name}{p.manager ? ' · ' + p.manager : ''}</div></td>
+          {months.map(x => { const q = rec(p.id, x); return <td key={x} className="n" style={{ background: tone(q?.rag) }} data-tip={q?.note || undefined}>{q?.progress_pct != null ? fmt(Number(q.progress_pct)) + '%' : ''}</td>; })}
+          <td className="n">{ed ? <NumIn w={64} value={r?.progress_pct ?? null} onChange={v => put(p, 'progress_pct', v)} /> : r?.progress_pct ?? ''}{!r && prev?.progress_pct != null && <div className="mini">last {fmt(Number(prev.progress_pct))}%</div>}</td>
+          <td className="n">{ed ? <NumIn w={100} value={r?.spent ?? null} onChange={v => put(p, 'spent', v)} /> : money(r?.spent)}</td>
+          <td>{ed ? <select value={r?.rag || ''} onChange={e => put(p, 'rag', e.target.value || null)}><option value="">—</option>{RAG.map(([v]) => <option key={v}>{v}</option>)}</select> : r?.rag}</td>
+          <td>{ed ? <input type="text" defaultValue={r?.note || ''} placeholder={prev?.note ? 'last: ' + prev.note.slice(0, 40) : 'What moved this month'} onBlur={e => { if ((e.target.value || null) !== (r?.note || null)) put(p, 'note', e.target.value || null); }} /> : <span className="mini">{r?.note}</span>}</td></tr>; })}
+    </tbody></table></div>
+    {!projects.length && <Empty>No projects in this view.</Empty>}
+  </>;
 }
 
 /* ---------- Backup & restore ---------- */

@@ -363,3 +363,8 @@ tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-lef
 .cbar{display:inline-block;width:90px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;vertical-align:middle}.cbar i{display:block;height:100%;background:var(--accent,#c9a227);border-radius:3px}
 td>.cbar{width:100%}
 .contrib{align-items:flex-start}.contrib .cbar{width:80px;flex:none;margin-top:7px}.contrib .cw{padding-top:1px}.contrib .cname{flex:1;min-width:0}
+
+.krchips{display:inline-flex;gap:4px;flex-wrap:wrap;margin-left:8px;vertical-align:middle}.krchip{font-size:11px;background:var(--info-soft,#e8eef8);border-radius:10px;padding:1px 7px;font-weight:500;white-space:nowrap}
+.btn.xs{padding:0 6px;font-size:11px;line-height:18px;min-height:0}
+
+.vtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 12px}.vtabs a{padding:7px 12px;text-decoration:none;color:var(--muted,#666);font-weight:600;font-size:14px;border-bottom:2px solid transparent;margin-bottom:-1px}.vtabs a.on{color:var(--ink,#111);border-bottom-color:var(--accent,#c9a227)}
