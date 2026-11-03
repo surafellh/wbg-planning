@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, subtreeIds, unitOfObjective, type Period } from '../lib/calc';
+import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
 import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
@@ -53,6 +53,19 @@ export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; o
 }
 
 /** Key-result detail: targets and actuals by month and quarter, check-in, history, comments. */
+/** The deliverables and weekly activities that drive a key result. */
+export function KrDriversBlock({ k }: { k: Row }) {
+  const { db } = useData(); const [open, setOpen] = useState<string | null>(null); if (!db) return null;
+  const dr = krDrivers(db, k.id);
+  if (!dr.dels.length && !dr.acts.length) return <div className="card"><h3>What drives this key result</h3><p className="note">No deliverables or weekly activities are linked yet. Heads link them in Work → Plan → Deliverables.</p></div>;
+  return <div className="card stack"><div className="row"><h3 style={{ flex: 1 }}>What drives this key result</h3><span className="mini">{dr.dels.length} deliverables · {dr.acts.length} weekly tasks · {dr.done} done{dr.stuck ? ` · ${dr.stuck} blocked/delayed` : ''}{dr.lastUpdate ? ` · last update ${String(dr.lastUpdate).slice(0, 10)}` : ''}</span></div>
+    <div className="row" style={{ gap: 8 }}><span className="mini">Work done</span><Bar p={dr.completion} /><span className="mini">{pct(dr.completion)}</span></div>
+    {dr.dels.map(d => { const acts = dr.acts.filter(a => a.deliverable_id === d.id); const dn = acts.filter(a => a.status === 'Done').length;
+      return <div key={d.id} className="drv"><div className="row click" onClick={() => setOpen(open === d.id ? null : d.id)}><span style={{ flex: 1 }}><b>{open === d.id ? '▾' : '▸'} {d.title}</b><div className="mini">{MONTHS[d.month - 1]} · {posName(db, d.owner_position_id)} · {acts.length ? `${dn}/${acts.length} tasks done` : 'no weekly tasks yet'}</div></span><Pill tone={d.status === 'accepted' ? 'good' : d.status === 'done' ? 'warn' : d.status === 'returned' ? 'bad' : 'none'}>{d.status}</Pill></div>
+        {open === d.id && <div className="drvacts">{acts.sort((a, b) => b.week_start.localeCompare(a.week_start)).map(a => <div key={a.id} className="krline"><span style={{ flex: 1 }}>{a.code ? <span className="mini">{a.code} · </span> : null}{a.title}<div className="mini">{posName(db, a.owner_position_id)} · last in {a.week_start}{a.carried_count ? ` · carried ${a.carried_count} wk` : ''}{a.blocker ? ` · ${a.blocker}` : ''}</div></span><Pill tone={a.status === 'Done' ? 'good' : a.status === 'Stuck' ? 'bad' : a.status === 'Delayed' ? 'warn' : 'none'}>{a.status === 'Stuck' ? 'Blocked' : a.status}</Pill><span className="mini">{a.pct ?? 0}%</span></div>)}</div>}</div>; })}
+  </div>;
+}
+
 export function KrDrawer({ id, onClose, p: p0 }: { id: string; onClose: () => void; p?: Period }) {
   const { db, me, can, user } = useData(); const save = useSave();
   const [m, setM] = useState(curMonth()); const [v, setV] = useState(''); const [conf, setConf] = useState('Medium'); const [note, setNote] = useState(''); const [ev, setEv] = useState(''); const [cm, setCm] = useState('');
@@ -80,6 +93,7 @@ export function KrDrawer({ id, onClose, p: p0 }: { id: string; onClose: () => vo
     <div className="tw"><table className="t"><thead><tr><th>Quarter</th><th className="n">Target</th><th className="n">Actual</th><th>Progress</th><th>Status</th></tr></thead><tbody>
       {[1, 2, 3, 4].map(q => { const qs = krState(db, k, { t: 'Q', n: q }); return <tr key={q}><td>Q{q}{q === qOfMonth(curMonth()) ? ' (now)' : ''}</td><td className="n">{fmt(qs.target, 1)}</td><td className="n">{fmt(qs.actual, 1)}</td><td><Bar p={qs.progress} /> {pct(qs.progress)}</td><td><StatePill s={qs} /></td></tr>; })}
     </tbody></table></div>
+    <KrDriversBlock k={k} />
     {k.erp_kr_text && <div className="note">From the ERP: {k.erp_kr_text}</div>}
     {mayCheck && <div className="card stack"><h3>Check in</h3>
       <div className="g3"><label className="f">Month<select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.slice(0, curMonth()).map((mm, i) => <option key={mm} value={i + 1}>{mm}</option>)}</select></label>
@@ -225,5 +239,29 @@ export function GroupView() {
             <td><Bar p={gScore(g)} /></td></tr>; })}
       </tbody></table></div></section>)}
     <p className="note">Months {MONTHS.join(' · ')} start on the Ethiopian month. Period months: {periodMonths(p).map(x => MONTHS[x - 1]).join(', ')}.</p>
+  </Page>;
+}
+
+/** INSIGHTS — Key result follow-up: every key result with the deliverables and weekly activities that drive it. */
+export function KrFollowUp() {
+  const { db, unit } = useData(); const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [q, setQ] = useState(''); const [show, setShow] = useState<'all' | 'linked' | 'none' | 'risk'>('all'); const [kr, setKr] = useState<string | null>(null);
+  if (!db || !unit) return null;
+  const sub = org ? subtreeIds(db, org) : null;
+  const rows = db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && o.status !== 'Archived' && (!sub || sub.has(o.org_unit_id)))
+    .flatMap(o => krsOf(db, o.id).map(k => ({ k, o, s: krState(db, k, p), d: krDrivers(db, k.id) })))
+    .filter(r => !q || (r.k.title + ' ' + r.o.text).toLowerCase().includes(q.toLowerCase()))
+    .filter(r => show === 'all' || (show === 'linked' ? r.d.acts.length > 0 : show === 'none' ? !r.d.dels.length && !r.d.acts.length : r.d.stuck > 0 || r.s.tone === 'bad'));
+  const linked = rows.filter(r => r.d.acts.length).length;
+  return <Page title="Key result follow-up" desc="Each key result with the deliverables and weekly activities that drive it — see whether the work behind a result is moving." help={<>
+    <p>Activities from the weekly plan link to a monthly deliverable, and the deliverable to a key result. This page rolls them up per key result: how many deliverables, how many weekly tasks, how many are done or blocked, and when the work was last updated.</p>
+    <p>A key result with no linked work, or whose work is blocked, needs attention even if its number looks fine. Click a row for the full detail.</p></>}>
+    <Cmd right={<><input type="text" placeholder="Search key results" value={q} onChange={e => setQ(e.target.value)} /><OrgFilter value={org} onChange={setOrg} /><Seg value={show} options={[['all', 'All'], ['linked', 'With work linked'], ['none', 'No work linked'], ['risk', 'At risk']]} onChange={setShow} /><PeriodPicker value={p} onChange={setP} /></>} />
+    <div className="kpis"><div className="tile"><div className="tv">{rows.length}</div><div className="tl">Key results</div></div><div className="tile good"><div className="tv">{linked}</div><div className="tl">With weekly work linked</div></div><div className={'tile ' + (rows.length - linked ? 'warn' : '')}><div className="tv">{rows.length - linked}</div><div className="tl">No work linked yet</div></div><div className={'tile ' + (rows.some(r => r.d.stuck) ? 'bad' : '')}><div className="tv">{rows.reduce((a, r) => a + r.d.stuck, 0)}</div><div className="tl">Blocked / delayed tasks</div></div></div>
+    {!rows.length ? <Empty>No key results match.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Key result</th><th>Organisation</th><th>Status · {periodLabel(p)}</th><th className="n" data-tip="Deliverables linked: accepted / total">Deliverables</th><th className="n" data-tip="Weekly tasks linked (latest week of each): done / total">Weekly tasks</th><th data-tip="Average % complete of the linked weekly tasks">Work done</th><th className="n">Blocked</th><th>Last update</th></tr></thead><tbody>
+      {rows.map(({ k, o, s, d }) => <tr key={k.id} className="click" onClick={() => setKr(k.id)}><td>{k.title}<div className="mini">{o.text}</div></td><td className="mini">{byId(db.org_units, o.org_unit_id)?.name}</td><td><StatePill s={s} /></td>
+        <td className="n">{d.dels.length ? `${d.dels.filter(x => x.status === 'accepted').length}/${d.dels.length}` : '—'}</td><td className="n">{d.acts.length ? `${d.done}/${d.acts.length}` : '—'}</td><td>{d.acts.length ? <><Bar p={d.completion} /> {pct(d.completion)}</> : <span className="mini">no work linked</span>}</td>
+        <td className={'n' + (d.stuck ? ' neg' : '')}>{d.stuck || ''}</td><td className="mini">{d.lastUpdate ? String(d.lastUpdate).slice(0, 10) : ''}</td></tr>)}
+    </tbody></table></div>}
+    {kr && <KrDrawer id={kr} p={p} onClose={() => setKr(null)} />}
   </Page>;
 }

@@ -7,7 +7,7 @@ import { Seg } from './lib/ui';
 import { Bell } from './lib/social';
 import Login from './pages/Login';
 import { ClaimScreen } from './pages/Claim';
-import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview } from './pages/Goals';
+import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview, KrFollowUp } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
 import { RevenuePlan, BudgetPlan } from './pages/AnnualPlan';
 import { PlanCalendar, Resources, Rescope } from './pages/Resources';
@@ -50,7 +50,7 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       return [{ items }];
     }
     if (win === 'insights' && !W.fullInsights) return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.overview }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }] }];
-    if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
+    if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/kr-followup', label: 'Key result follow-up', icon: I.deliv }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
       { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, ...(moduleOn(db, 'projects') ? [{ to: '/insights/projects', label: 'Projects', icon: I.plan }] : [])] },
       { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
     const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
@@ -137,6 +137,7 @@ function Shell() {
         <Route path="/insights/strategy" element={ok(W.fullInsights, <StrategyOverview />)} />
         <Route path="/insights/map" element={ok(W.fullInsights, <GoalsMap />)} />
         <Route path="/insights/alignment" element={ok(W.fullInsights, <Alignment />)} />
+        <Route path="/insights/kr-followup" element={ok(W.fullInsights, <KrFollowUp />)} />
         <Route path="/insights/people-work" element={ok(W.fullInsights, <WhoDoesWhat />)} />
         <Route path="/insights/performance" element={ok(W.fullInsights, <PerfOrg />)} />
         <Route path="/insights/people" element={ok(W.fullInsights, <PerfPeople />)} />
