@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, byId, ROLE_NAME, type DB, type Row } from '../lib/data';
 import { orgScore, orgScoreOwn, personResult, bandOf, pct, fmt, resultRule, objScore, objState, krsOf, krState, delivScore, subtreeIds, periodLabel, MONTHS, curMonth, workStats, weekStart, ymd, type Period } from '../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, Empty, Drawer, PeriodPicker, usePeriod, LineChart, StatusStack, StatePill } from '../lib/ui';
+import { Page, Cmd, Ring, Bar, Pill, Empty, Drawer, PeriodPicker, usePeriod, LineChart, StatusStack, StatePill , ViewTabs } from '../lib/ui';
 import { statusCounts, KrDrawer } from './Goals';
 
 const PERF_HELP = (db: DB) => { const w: Record<string, number> = Object.fromEntries(['unit', 'department', 'division', 'employee'].map(l => [l, resultRule(db, l).share])); return <>
@@ -103,6 +103,7 @@ export function PerfPeople({ mine }: { mine?: boolean }) {
   const orgs = Array.from(subtreeIds(db, unit)).map(id => byId(db.org_units, id)!).filter(u => u.kind !== 'unit');
   const bands = ['Achieved', 'Well performed', 'Partially achieved', 'Under performed'].map(b => ({ label: b, n: rows.filter(r => bandOf(r.r.R, db) === b).length, tone: b === 'Achieved' || b === 'Well performed' ? 'good' : b === 'Partially achieved' ? 'warn' : 'bad' }));
   return <Page title="People" desc="Each person's result for the period — click a person for deliverables, key results and trend." help={PERF_HELP(db)}>
+    <ViewTabs items={[['/insights/people', 'Results', 'Each person’s result and band for the period'], ['/insights/people-work', 'Workload', 'Who is doing what: objectives, deliverables and this week’s activities per person']]} />
     <Cmd right={<><select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">Whole unit</option>{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select><input type="text" placeholder="Find a person" value={q} onChange={e => setQ(e.target.value)} /><PeriodPicker value={p} onChange={setP} /></>} />
     <div className="card" style={{ marginBottom: 12 }}><h4>Bands · {periodLabel(p)}</h4><StatusStack counts={bands} /></div>
     {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th data-tip="Which organisation's score counts for this person (the one they lead, or the one they sit in) and how much it weighs.">Organisation part</th><th className="n">Score</th><th className="n">Personal</th><th>Result</th><th>Band</th><th className="n">To HR</th></tr></thead><tbody>

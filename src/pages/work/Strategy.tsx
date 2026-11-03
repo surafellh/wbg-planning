@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
 import { objScore, objState, krsOf, krState, childObjectives, liveObj, currentPeriod, periodLabel, pct, fmt, orgScoreOwn, orgScore, MONTHS, curMonth, qOfMonth, qMonths, personResult, bandOf, workStats, weekStart, ymd, weekLabel, delivScore, subtreeIds, ownShare, krDrivers, type Period } from '../../lib/calc';
 import { UnitPicker, HowItWorks, Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
-import { unitGoalsTree, goalScore, pillarScore, statusCounts } from '../Goals';
+import { unitGoalsTree, goalScore, pillarScore, statusCounts, unitKrs, IdentityModal } from '../Goals';
 import { isHead, headedOrgs } from './Plan';
 import { teamOf } from '../Work';
 
@@ -64,16 +64,18 @@ export function OurStrategy() {
 
 /** The strategic plan everyone can read — the whole of it: the Group's vision, mission, values, all pillars and goals, and the unit's own plan. */
 export function StrategicPlan() {
-  const { db, me } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [view, setView] = useState<'group' | 'unit'>('group'); if (!db || !me) return null;
-  const group = db.org_units.find(x => x.kind === 'group'); const unit = byId(db.org_units, me.unit_id);
-  const gst = db.strategy_statements.find(s => s.unit_id === group?.id); const ust = db.strategy_statements.find(s => s.unit_id === me.unit_id);
-  const tree = unitGoalsTree(db, me.unit_id); const served = new Set(db.unit_goals.filter(g => g.unit_id === me.unit_id).map(g => g.group_goal_id));
+  const { db, me, can, unit: selUnit } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [view, setView] = useState<'group' | 'unit'>(() => new URLSearchParams(location.search).get('view') === 'unit' ? 'unit' : 'group'); const [ed, setEd] = useState(false); if (!db || !me) return null;
+  const uid = can('seeGroup') && selUnit ? selUnit : me.unit_id;
+  const group = db.org_units.find(x => x.kind === 'group'); const unit = byId(db.org_units, uid);
+  const gst = db.strategy_statements.find(s => s.unit_id === group?.id); const ust = db.strategy_statements.find(s => s.unit_id === uid);
+  const tree = unitGoalsTree(db, uid); const served = new Set(db.unit_goals.filter(g => g.unit_id === uid).map(g => g.group_goal_id));
+  const krs = unitKrs(db, uid); const nObj = db.objectives.filter(o => o.unit_id === uid && o.status !== 'Archived' && o.level !== 'individual').length;
   const Ident = ({ st, who }: { st: Row | undefined; who: string }) => <>
     <div className="ident"><div className="lcard"><h4>{who} vision</h4><div className="big">{st?.vision || '—'}</div></div><div className="lcard"><h4>{who} mission</h4><div>{st?.mission || '—'}</div></div></div>
     <div className="lcard" style={{ marginTop: 10 }}><h4>Core values</h4>{(st?.values || []).length ? <div className="vals">{st!.values.map((v: Row) => <div key={v.name}><b>{v.name}</b>{v.text && <span className="note">{v.text}</span>}</div>)}</div> : <p className="note">Not entered yet — Studio → Strategy builder → Edit vision, mission and values.</p>}</div></>;
   return <div className="light wide">
     <div className="lhead"><div><h1>Strategic plan</h1><p>{view === 'group' ? `Wagwago Business Group${gst?.period ? ' · ' + gst.period : ''}` : `${unit?.name}${ust?.period ? ' · ' + ust.period : ''}`} — where we are going.<HowItWorks><h3>What this page is for</h3><p>The whole strategic plan: the <b>Group</b> vision, mission and core values, all its <b>pillars</b> and <b>strategic goals</b>; and your unit's own plan, with the Group goals each unit goal serves. Goals your unit serves are marked. Every objective in the app delivers one of these goals. Group Strategy maintains it in Studio → Strategy builder.</p></HowItWorks></p></div>
-      <Seg value={view} options={[['group', 'Group strategic plan'], ['unit', unit?.name || 'Our unit']]} onChange={setView} /><PeriodPicker value={p} onChange={setP} /></div>
+      <div className="row">{view === 'unit' && <UnitPicker />}<Seg value={view} options={[['group', 'Group strategic plan'], ['unit', can('seeGroup') ? 'Unit plan' : unit?.name || 'Our unit']]} onChange={setView} /><PeriodPicker value={p} onChange={setP} /></div></div>
     {view === 'group' ? <>
       <Ident st={gst} who="Group" />
       <section className="lsec"><h3>{db.group_pillars.length} {t('pillar', true).toLowerCase()} and {db.group_goals.length} {t('goal', true).toLowerCase()}</h3>
@@ -82,6 +84,16 @@ export function StrategicPlan() {
             return <div key={g.id} className="lg row"><span style={{ flex: 1 }}>{g.code} {g.name}{units.length > 0 && <div className="mini">served by {Array.from(new Set(units)).join(', ')}</div>}</span>{served.has(g.id) && <Pill tone="good">we serve this</Pill>}</div>; })}</div>)}</div></section></>
     : <>
       <Ident st={ust || gst} who={ust ? (unit?.name || 'Unit') : 'Group'} />
+      {!ust && <p className="note">{unit?.name} uses the Group vision and mission{unit?.unit_type === 'function' ? ' — it is a corporate function working to the Group strategy' : ''}.</p>}
+      {can('editPlan') && <div className="row" style={{ marginTop: 8 }}><button className="btn sm" onClick={() => setEd(true)}>{ust ? 'Edit vision, mission and values' : 'Add a unit vision, mission and values'}</button></div>}
+      <div className="kpis" style={{ marginTop: 14 }}>
+        <div className="tile"><div className="tv">{tree.length}</div><div className="tl">{t('pillar', true)}</div></div>
+        <div className="tile"><div className="tv">{tree.reduce((a, x) => a + x.goals.length, 0)}</div><div className="tl">{t('goal', true)}</div></div>
+        <div className="tile"><div className="tv">{nObj}</div><div className="tl">{t('objective', true)}</div><div className="ts">{krs.length} {t('key_result', true).toLowerCase()}</div></div>
+        <div className="tile"><div className="row"><Ring p={orgScore(db, uid, p)} size={46} /><div className="tl">{periodLabel(p)} score</div></div></div>
+        <div className="tile" style={{ gridColumn: 'span 2' }}><div className="tl" style={{ marginBottom: 6 }}>{t('key_result', true)} — {periodLabel(p)}</div><StatusStack counts={statusCounts(db, krs, p)} /></div>
+      </div>
+      {ed && <IdentityModal unit={uid} onClose={() => setEd(false)} />}
       <section className="lsec"><h3>{unit?.name} {t('pillar', true).toLowerCase()} and {t('goal', true).toLowerCase()} · progress {periodLabel(p)}</h3>
         {tree.length ? <div className="pilgrid">{tree.map(({ p: pil, goals }) => <div key={pil.id} className="pilcard"><div className="ph"><Ring p={pillarScore(db, pil.id, p)} size={38} /><b>{pil.code} · {pil.name}</b></div>{pil.description && pil.description !== 'Group pillar' && <div className="note">{pil.description}</div>}
           {goals.map(g => { const gg = byId(db.group_goals, g.group_goal_id); return <div key={g.id} className="lg row"><span style={{ flex: 1 }}>{g.code} {g.name}{g.weight != null && <span className="mini"> · {fmt(Number(g.weight))}% of the pillar</span>}{gg && <div className="mini">serves Group {gg.code} {gg.name}</div>}{g.description && <div className="mini">{g.description}</div>}</span><span className="mini">{pct(goalScore(db, g.id, p))}</span></div>; })}</div>)}</div>

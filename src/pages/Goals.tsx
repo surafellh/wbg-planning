@@ -4,7 +4,7 @@ import { Targets } from './work/Plan';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, weighted, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter, NumIn } from '../lib/ui';
+import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter, NumIn, ViewTabs } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
 const LVL: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
@@ -229,6 +229,7 @@ export function GoalsMap() {
       <li>Every figure is for the period chosen at the top — a month, quarter, half or the year — against that period's target, not the annual total.</li>
       <li>₿ from the annual plan · ✓ from deliverables · ↳ from the objectives below · ✎ checked in with evidence.</li>
       <li><b>Status is judged on pace.</b> Halfway through a quarter, a key result at 50% of its quarter target is on track. The rule is set in Settings → Rules.</li></ul></>}>
+    <ViewTabs items={[['/insights/map', 'Strategy map', 'Pillar → goal → objectives → key results, with progress'], ['/insights/alignment', 'Cascade & owners', 'How objectives cascade, who owns each one and how much it contributes']]} />
     <Cmd right={<><input type="text" placeholder="Search objectives, key results, departments" value={q} onChange={e => setQ(e.target.value)} /><Seg value={lvl} options={[['all', 'All'], ['off', 'Off track only']]} onChange={setLvl} /><PeriodPicker value={p} onChange={setP} /></>} />
     {!tree.length && !loose.length && <Empty>No strategy or OKRs loaded for this unit yet.</Empty>}
     <PlanFeeds db={db} unit={unit} p={p} onKr={setKr} />

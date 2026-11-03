@@ -50,7 +50,7 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       return [{ items }];
     }
     if (win === 'insights' && !W.fullInsights) return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.overview }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }] }];
-    if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/strategy', label: 'Strategy', icon: I.strategy }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/alignment', label: 'Alignment', icon: I.align }, { to: '/insights/kr-followup', label: 'Key result follow-up', icon: I.deliv }, { to: '/insights/people-work', label: 'Who is doing what', icon: I.people }] },
+    if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/kr-followup', label: 'Key result follow-up', icon: I.deliv }] },
       { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, ...(moduleOn(db, 'projects') ? [{ to: '/insights/projects', label: 'Projects', icon: I.plan }] : [])] },
       { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
     const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
@@ -105,7 +105,7 @@ function Shell() {
       <div className="brand"><span>WBG</span>Planning<span className="sp" /><Bell /></div>
       <div style={{ padding: '0 10px 8px' }}><Search /></div>
       {wins.length > 1 && <div className="winsw" role="tablist" aria-label="Window">{wins.map(([k, l]) => <button key={k} role="tab" aria-selected={win === k} className={win === k ? 'on' : ''} onClick={() => go(k)}>{l}</button>)}</div>}
-      <nav aria-label="Main">{groups.map((g, gi) => <div key={gi} className="navg">{g.label && <div className="navl">{g.label}</div>}{g.items.map(it => <NavLink key={it.to} to={it.to} className={({ isActive }) => 'mod' + (isActive || (it.to === '/strategy' && loc.pathname.startsWith('/goals')) ? ' on' : '')}><Ico d={it.icon} /><span>{it.label}</span>{it.badge ? <i className="cnt">{it.badge}</i> : null}</NavLink>)}</div>)}</nav>
+      <nav aria-label="Main">{groups.map((g, gi) => <div key={gi} className="navg">{g.label && <div className="navl">{g.label}</div>}{g.items.map(it => <NavLink key={it.to} to={it.to} className={({ isActive }) => 'mod' + (isActive || (it.to === '/strategy' && loc.pathname.startsWith('/goals')) || (it.to === '/insights/map' && loc.pathname === '/insights/alignment') || (it.to === '/insights/people' && loc.pathname === '/insights/people-work') ? ' on' : '')}><Ico d={it.icon} /><span>{it.label}</span>{it.badge ? <i className="cnt">{it.badge}</i> : null}</NavLink>)}</div>)}</nav>
       <div className="sbot">
         <div className="who"><b>{me.holder_name || me.title}</b>{me.title} · {ROLE_NAME[role]}</div>
         {isAdmin && <SeeAs />}
@@ -134,7 +134,7 @@ function Shell() {
         {/* Insights window */}
         <Route path="/insights" element={<Navigate to={W.fullInsights ? '/insights/overview' : '/insights/me'} replace />} />
         <Route path="/insights/overview" element={ok(W.fullInsights, <Overview />)} />
-        <Route path="/insights/strategy" element={ok(W.fullInsights, <StrategyOverview />)} />
+        <Route path="/insights/strategy" element={<Navigate to="/insights/plan" replace />} />
         <Route path="/insights/map" element={ok(W.fullInsights, <GoalsMap />)} />
         <Route path="/insights/alignment" element={ok(W.fullInsights, <Alignment />)} />
         <Route path="/insights/kr-followup" element={ok(W.fullInsights, <KrFollowUp />)} />
