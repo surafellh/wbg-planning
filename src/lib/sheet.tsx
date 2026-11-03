@@ -9,6 +9,13 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
   sticky?: boolean; cols: Col[]; rows: any[]; onChange?: (i: number, key: string, v: any) => void; onAdd?: () => void; onDelete?: (i: number) => void; readOnly?: boolean; height?: number; empty?: string; footer?: ReactNode;
 }) {
   const [sel, setSel] = useState<[number, number] | null>(null); const [edit, setEdit] = useState<string | null>(null);
+  // reading long text: wrap rows (remembered per browser) and drag a column's right edge to widen it
+  const [wrap, setWrapS] = useState<boolean>(() => { try { return localStorage.getItem('wbg.sheet.wrap') === '1'; } catch { return false; } });
+  const setWrap = (v: boolean) => { setWrapS(v); try { localStorage.setItem('wbg.sheet.wrap', v ? '1' : '0'); } catch { /* ignore */ } };
+  const [wid, setWid] = useState<Record<string, number>>({}); const W = (c: Col) => wid[c.key] ?? c.width ?? 120;
+  const startResize = (e: React.MouseEvent, c: Col) => { e.preventDefault(); e.stopPropagation(); const x0 = e.clientX, w0 = W(c);
+    const mv = (ev: MouseEvent) => setWid(w => ({ ...w, [c.key]: Math.max(50, Math.min(900, w0 + ev.clientX - x0)) }));
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up); };
   const undo = useRef<Change[]>([]); const redo = useRef<Change[]>([]); const box = useRef<HTMLDivElement>(null); const inp = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   const can = (r: number, c: number) => !readOnly && !rows[r]?._header && cols[c].type !== 'ro' && (!cols[c].editable || cols[c].editable!(rows[r]));
   const parse = (c: Col, v: string) => c.type === 'number' ? (v.trim() === '' ? null : Number(v.replace(/[, ]/g, ''))) : v;
@@ -40,15 +47,15 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
   }
   // keep the main column (first one that is not the reference code) and the code column visible when scrolling sideways
   const stickTo = sticky ? Math.max(0, cols.findIndex(c => c.key !== 'code')) : -1;
-  const leftOf = (j: number) => 34 + cols.slice(0, j).reduce((a, c) => a + (c.width || 120), 0);
+  const leftOf = (j: number) => 34 + cols.slice(0, j).reduce((a, c) => a + W(c), 0);
   const stk = (j: number) => j <= stickTo ? { position: 'sticky' as const, left: leftOf(j), zIndex: 1 } : {};
   const totals = cols.map(c => c.total ? rows.filter(r => !r._header).reduce((s, r) => s + (Number(r[c.key]) || 0), 0) : null);
   return <div className="sheetwrap"><div className="sheet" ref={box} tabIndex={0} onKeyDown={onKey} onPaste={onPaste} style={height ? { maxHeight: height } : undefined}>
-    <table className={sticky ? 'stick1' : ''}><thead><tr><th className="rn">#</th>{cols.map((c, j) => <th key={c.key} className={j <= stickTo ? 'stk' : ''} style={{ width: c.width, minWidth: c.width, maxWidth: c.width, ...stk(j), ...(j <= stickTo ? { zIndex: 3 } : {}) }} data-tip={c.tip}>{c.label}</th>)}{onDelete && !readOnly && <th className="rn" />}</tr></thead>
+    <table className={(sticky ? 'stick1' : '') + (wrap ? ' wrap' : '')}><thead><tr><th className="rn">#</th>{cols.map((c, j) => <th key={c.key} className={j <= stickTo ? 'stk' : ''} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j), ...(j <= stickTo ? { zIndex: 3 } : {}) }} data-tip={c.tip}>{c.label}<span className="colrs" title="Drag to widen · double-click to fit" onMouseDown={e => startResize(e, c)} onDoubleClick={e => { e.stopPropagation(); setWid(w => ({ ...w, [c.key]: wid[c.key] ? (c.width || 120) : Math.min(900, Math.max(W(c), ...rows.map(r => String(r[c.key] ?? '').length * 7 + 20))) })); }} /></th>)}{onDelete && !readOnly && <th className="rn" />}</tr></thead>
       <tbody>{rows.map((r, i) => r._header ? <tr key={'h' + i} className="hdr-row"><td colSpan={cols.length + 2}>{r._header}</td></tr> : <tr key={r.id || i} className={r._dirty ? 'dirty' : ''}>
         <td className="rn">{i + 1}</td>
         {cols.map((c, j) => { const on = sel && sel[0] === i && sel[1] === j; const ed = on && edit !== null; const v = r[c.key]; const ro = !can(i, j);
-          return <td key={c.key} style={{ width: c.width, minWidth: c.width, maxWidth: c.width, ...stk(j) }} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (j <= stickTo ? 'stk ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={e => { if (['INPUT', 'SELECT', 'BUTTON'].includes((e.target as HTMLElement).tagName)) return; const open = can(i, j) && c.type !== 'select'; if (open) e.preventDefault(); if (!on) { commit(); setSel([i, j]); if (open) setEdit(v == null ? '' : String(v)); else box.current?.focus(); } else if (edit === null && open) setEdit(v == null ? '' : String(v)); }} title={ro && c.type !== 'ro' && !readOnly ? 'Locked' : undefined}>
+          return <td key={c.key} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j) }} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (j <= stickTo ? 'stk ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={e => { if (['INPUT', 'SELECT', 'BUTTON'].includes((e.target as HTMLElement).tagName)) return; const open = can(i, j) && c.type !== 'select'; if (open) e.preventDefault(); if (!on) { commit(); setSel([i, j]); if (open) setEdit(v == null ? '' : String(v)); else box.current?.focus(); } else if (edit === null && open) setEdit(v == null ? '' : String(v)); }} title={ro && c.type !== 'ro' && !readOnly ? 'Locked' : undefined}>
             {ed ? <input ref={el => { inp.current = el; }} type={c.type === 'date' ? 'date' : 'text'} inputMode={c.type === 'number' ? 'decimal' : undefined} value={edit!} onChange={e => setEdit(e.target.value)} onBlur={commit} />
               : c.type === 'select' && !ro ? <select className={v ? '' : 'empty'} value={v ?? ''} onChange={e => set(i, c.key, e.target.value || null)} onFocus={() => setSel([i, j])}>{<option value="">{c.placeholder || '—'}</option>}{(c.options || []).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
               : c.fmt ? c.fmt(v, r) : c.type === 'select' ? ((c.options || []).find(o => o[0] === v)?.[1] ?? '') : c.type === 'number' ? (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })) : (v ?? '')}
@@ -58,7 +65,7 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
         {!rows.length && <tr><td colSpan={cols.length + 2} className="note" style={{ padding: 14 }}>{empty || 'No rows yet.'}</td></tr>}
         {totals.some(t => t != null) && <tr className="tot"><td className="rn" />{cols.map((c, j) => <td key={c.key} className={c.type === 'number' ? 'n' : ''}>{j === 0 ? 'Total' : totals[j] != null ? totals[j]!.toLocaleString('en-US', { maximumFractionDigits: 0 }) : ''}</td>)}{onDelete && !readOnly && <td />}</tr>}
       </tbody></table></div>
-    <div className="sheetbar">{onAdd && !readOnly && <button className="btn sm" onClick={onAdd}>+ Row</button>}<span className="mini">Click a white cell to type · grey cells are worked out or locked · Enter moves down · paste a block from Excel · Ctrl+Z undo.</span><span className="sp" />{footer}</div></div>;
+    <div className="sheetbar">{onAdd && !readOnly && <button className="btn sm" onClick={onAdd}>+ Row</button>}<label className="mini row" style={{ gap: 4, whiteSpace: 'nowrap' }} data-tip="Show long text in full by letting rows grow taller."><input type="checkbox" checked={wrap} onChange={e => setWrap(e.target.checked)} />Wrap text</label><span className="mini">Hover a cut-off cell to read it all · drag a column edge to widen it · click a white cell to type · grey cells are worked out or locked · paste from Excel · Ctrl+Z undo.</span><span className="sp" />{footer}</div></div>;
 }
 
 /** Local draft of rows with dirty tracking: edit freely, then Save or Discard. */
