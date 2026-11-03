@@ -344,3 +344,7 @@ tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-lef
 .sheet table.wrap td.rn{padding:6px 4px}
 .sheet th{position:sticky}.sheet th .colrs{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:4}
 .sheet th .colrs:hover,.sheet th .colrs:active{background:var(--accent);opacity:.5}
+.paycell{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:190px}
+.paycell select{font-size:12px;padding:2px 4px;max-width:150px}
+.mchips{display:inline-flex;gap:2px}.mchip{font-size:11px;padding:2px 6px;border:1px solid var(--line2);border-radius:6px;background:var(--panel);color:var(--muted);cursor:pointer}
+.mchip.on{background:var(--accent);border-color:var(--accent);color:#1b1b1b;font-weight:700}

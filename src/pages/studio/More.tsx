@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useData, useSave, byId, TABLES, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
-import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt, needLines, type NeedLine } from '../../lib/calc';
+import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt, needLines, PAY_PATTERN, type NeedLine } from '../../lib/calc';
 import { Page, Cmd, Seg, Pill, Empty, Modal, NumIn } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { SaveBar, applyTargetChanges } from '../work/Plan';
@@ -66,13 +66,14 @@ export function ResourcesMonthly() {
   const funds = { confirmed: fm ? Number(fm.confirmed) : qf ? Number(qf.confirmed) / 3 : 0, expected: fm ? Number(fm.expected) : qf ? Number(qf.expected) / 3 : 0 };
   const source = useMemo(() => {
     if (!db || !unit) return [];
-    const { groups } = needLines(db, unit, [m], { confirmed: 0, expected: 0 });
-    const row = (n: NeedLine, gRank: number): Row => { const s = db.need_schedule.find(x => x.unit_id === unit && x.need_key === n.key && x.plan_month === m);
-      return { id: s?.id, key: n.key, gkey: n.must ? 'committed' : n.gkey, grank: n.must ? -1 : gRank, plan_month: m, need: n.line.name, grp: n.grp, sec: SECN[n.sec], planned: n.amount, base: n.base, pay_month: String(s?.pay_month ?? m), amount: s?.amount ?? n.amount, rank: s?.rank ?? n.rank, status: s?.status || 'Scheduled', must: n.must ? 'committed' : '', carried: '' }; };
-    const rows: Row[] = groups.flatMap((g, gi) => [...g.committed.map(n => row(n, gi)), ...g.lines.map(n => row(n, gi))]);
+    const { order, mode } = needLines(db, unit, [m], { confirmed: 0, expected: 0 });
+    const row = (n: NeedLine, pos: number): Row => { const s = db.need_schedule.find(x => x.unit_id === unit && x.need_key === n.key && x.plan_month === m);
+      return { id: s?.id, key: n.key, gkey: mode === 'line' ? 'all' : n.must ? 'committed' : n.gkey, grank: n.must ? -1 : pos, plan_month: m, need: n.line.name, grp: n.grp, sec: SECN[n.sec], planned: n.amount, base: Math.abs(lineVals(n.line)[m - 1] - lineVals(n.line, true)[m - 1]) > 0.5 ? lineVals(n.line, true)[m - 1] : n.amount, how: PAY_PATTERN[n.plan?.pattern || 'planned'], pay_month: String(s?.pay_month ?? m), amount: s?.amount ?? n.amount, rank: s?.rank ?? (mode === 'line' ? pos : n.rank), status: s?.status || 'Scheduled', must: n.must ? 'committed' : '', carried: '' }; };
+    const groupsPos = new Map<string, number>(); order.forEach((n, i) => { if (!groupsPos.has(n.gkey)) groupsPos.set(n.gkey, i); });
+    const rows: Row[] = order.filter(n => n.amount > 0 || db.need_schedule.some(x => x.unit_id === unit && x.need_key === n.key && x.plan_month === m)).map((n, i) => row(n, mode === 'line' ? i : groupsPos.get(n.gkey)!));
     // amounts deferred from earlier months into this one
-    db.need_schedule.filter(x => x.unit_id === unit && x.plan_month < m && x.pay_month === m && x.status !== 'Cancelled').forEach(x => { const [sec, grp, lid] = x.need_key.split('|'); const l = lid ? byId(db.plan_lines, lid) : null; const gi = groups.findIndex(g => g.key === `${sec}|${grp}`);
-      rows.push({ id: x.id, key: x.need_key, gkey: `${sec}|${grp}`, grank: gi < 0 ? 999 : gi, plan_month: x.plan_month, need: l?.name || grp, grp, sec: SECN[sec], planned: Number(x.amount), base: Number(x.amount), pay_month: String(m), amount: Number(x.amount), rank: x.rank ?? 50, status: x.status, must: '', carried: `from ${MONTHS[x.plan_month - 1]}` }); });
+    db.need_schedule.filter(x => x.unit_id === unit && x.plan_month < m && x.pay_month === m && x.status !== 'Cancelled').forEach(x => { const [sec, grp, lid] = x.need_key.split('|'); const l = lid ? byId(db.plan_lines, lid) : null; const gi = order.findIndex(n => n.gkey === `${sec}|${grp}`);
+      rows.push({ id: x.id, key: x.need_key, gkey: `${sec}|${grp}`, grank: gi < 0 ? 999 : gi, how: '', plan_month: x.plan_month, need: l?.name || grp, grp, sec: SECN[sec], planned: Number(x.amount), base: Number(x.amount), pay_month: String(m), amount: Number(x.amount), rank: x.rank ?? 50, status: x.status, must: '', carried: `from ${MONTHS[x.plan_month - 1]}` }); });
     return rows.sort((a, b) => a.grank - b.grank || (Number(a.rank) || 0) - (Number(b.rank) || 0));
   }, [db, unit, m]);
   const d = useDraft(source, [source]);
@@ -85,13 +86,14 @@ export function ResourcesMonthly() {
   // grouped, collapsible view: a header per budget group, its lines when open
   const toggle = (k: string) => setOpen(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const view: Row[] = []; const idx: number[] = []; let last = '';
-  d.rows.forEach((r, i) => { if (r.gkey !== last) { last = r.gkey; const mem = d.rows.filter(x => x.gkey === r.gkey); const on = open.has(r.gkey); const fundedN = mem.filter(x => tier.get(x) === 'Funded').length;
+  const flat = d.rows.length > 0 && d.rows.every(r => r.gkey === 'all' || r.carried);
+  d.rows.forEach((r, i) => { if (flat) { view.push(r); idx.push(i); return; } if (r.gkey !== last) { last = r.gkey; const mem = d.rows.filter(x => x.gkey === r.gkey); const on = open.has(r.gkey); const fundedN = mem.filter(x => tier.get(x) === 'Funded').length;
       view.push({ _header: <button className="hbtn" onClick={() => toggle(r.gkey)}>{on ? '▾' : '▸'} {r.gkey === 'committed' ? 'Committed costs (paid first)' : `${r.grp} · ${r.sec}`} <span className="mini" style={{ fontWeight: 400 }}>— {mem.length} line{mem.length > 1 ? 's' : ''} · {money(sum(mem.map(x => Number(x.amount) || 0)))} · {fundedN} funded</span></button> }); idx.push(-1); }
     if (open.has(r.gkey)) { view.push(r); idx.push(i); } });
-  const cols: Col[] = [{ key: 'need', label: 'Budget line', type: 'ro', width: 230, fmt: (v, r) => <span>{v}{r.gkey === 'committed' && <span className="mini"> · {r.grp}</span>}</span> }, { key: 'carried', label: 'Carried', type: 'ro', width: 90 },
+  const cols: Col[] = [{ key: 'need', label: 'Budget line', type: 'ro', width: 230, fmt: (v, r) => <span>{v}{r.gkey === 'committed' && <span className="mini"> · {r.grp}</span>}</span> }, { key: 'grp', label: 'Group', type: 'ro', width: 150 }, { key: 'how', label: 'Paid', type: 'ro', width: 130, tip: 'How the line is paid this quarter — set on the Quarter waterline view.' }, { key: 'carried', label: 'Carried', type: 'ro', width: 90 },
     { key: 'planned', label: `${MONTHS[m - 1]} planned`, type: 'ro', width: 120, fmt: (v, r) => <span title={Math.abs(v - r.base) > 0.5 ? `Rescoped · original ${money(r.base)}` : undefined}>{money(v)}{Math.abs(v - r.base) > 0.5 ? ' ✎' : ''}</span>, tip: 'The plan in force: after an approved rescope this is the rescoped amount (✎).' },
     { key: 'pay_month', label: 'Pay in', type: 'select', options: MONTHS.map((x, i) => [String(i + 1), x] as [string, string]).filter(([k]) => Number(k) >= m), width: 90, tip: 'Schedule the payment for this month or push it to a later month.' },
-    { key: 'amount', label: 'Amount to pay', type: 'number', width: 120 }, { key: 'rank', label: 'Order in group', type: 'number', width: 100, tip: 'Lower number = paid first inside its budget group. The order of the groups is set on the Quarter waterline view.' },
+    { key: 'amount', label: 'Amount to pay', type: 'number', width: 120 }, { key: 'rank', label: flat ? 'Order' : 'Order in group', type: 'number', width: 100, tip: flat ? 'Lower number = paid first. The list across groups is set on the Quarter waterline view.' : 'Lower number = paid first inside its budget group. The order of the groups is set on the Quarter waterline view.' },
     { key: 'status', label: 'Status', type: 'select', options: [['Scheduled', 'Scheduled'], ['Paid', 'Paid'], ['Deferred', 'Deferred'], ['Cancelled', 'Cancelled']], width: 110 },
     { key: 'tier', label: 'Waterline', type: 'ro', width: 100, fmt: (_, r) => { const t = tier.get(r); return t ? <Pill tone={t === 'Funded' ? 'good' : t === 'Conditional' ? 'warn' : 'bad'}>{t}</Pill> : Number(r.pay_month) > m ? `→ ${MONTHS[Number(r.pay_month) - 1]}` : ''; } }];
   async function doSave() {
