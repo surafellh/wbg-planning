@@ -339,3 +339,8 @@ tr.wl2{border-left:0}
 tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-left:40px}
 .tgl{background:none;border:1px solid var(--line2);border-radius:5px;width:18px;height:18px;line-height:14px;padding:0;margin-right:4px;font-size:10px;color:var(--muted);cursor:pointer;vertical-align:1px}
 .tgl:hover{color:var(--ink);border-color:var(--muted)}.tgl0{display:inline-block;width:22px}
+/* spreadsheet: wrap long text, widen columns */
+.sheet table.wrap td{white-space:normal;height:auto;min-height:32px;padding:6px 8px;line-height:1.35;vertical-align:top;word-break:break-word}
+.sheet table.wrap td.rn{padding:6px 4px}
+.sheet th{position:sticky}.sheet th .colrs{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:4}
+.sheet th .colrs:hover,.sheet th .colrs:active{background:var(--accent);opacity:.5}
