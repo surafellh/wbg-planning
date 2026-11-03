@@ -210,7 +210,7 @@ export default function OkrPlan() {
     <button className="btn sm" onClick={() => setOm(o)}>Edit</button>
     <button className="btn sm danger" onClick={() => { if (confirm('Delete this objective and its key results?')) save(() => sb.from('objectives').delete().eq('id', o.id), ['objectives', 'key_results'], 'Deleted'); }}>Delete</button>
   </div>;
-  return <Page title="OKR plan" desc="Set the year's objectives from the strategic goals, cascade them, and weight them." help={<>
+  return <Page title="Objective planner" desc="Set the year's objectives from the strategic goals, cascade them, and weight them." help={<>
     <h3>How OKR planning works</h3><ol><li><b>Start from a strategic goal.</b> A unit objective always delivers one of the unit's own strategic goals; choosing the goal sets the pillar.</li>
       <li><b>Add key results</b> (2–5 per objective). Say how each is measured: from the annual plan (revenue, quantity or spending of chosen product groups or budget lines), from deliverables, from the objectives below, or checked in with evidence. Weights inside an objective add up to 100%.</li>
       <li><b>Cascade.</b> Use "+ Below" to give a department or division an objective that delivers the one above (or one of its key results). The weights of the objectives below one parent add up to 100% — this is cascade weighting.</li>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Targets } from './work/Plan';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
+import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, weighted, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
 import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
@@ -17,7 +17,8 @@ export const topObjectives = (db: DB, goalId: string) => db.objectives.filter(o 
 export const unlinked = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id);
 /** All objectives under a goal, at every level (for goal and pillar scores). */
 export function goalScore(db: DB, goalId: string, p: Period) { return avg(topObjectives(db, goalId).map(o => objScore(db, o, p))); }
-export function pillarScore(db: DB, pillarId: string, p: Period) { return avg(db.unit_goals.filter(g => g.pillar_id === pillarId).map(g => goalScore(db, g.id, p))); }
+/** Pillar score: its goals' scores, weighted by each goal's weight in the pillar (equal when no weights are set). */
+export function pillarScore(db: DB, pillarId: string, p: Period) { const gs = db.unit_goals.filter(g => g.pillar_id === pillarId); return weighted(gs.map(g => [Number(g.weight) || (gs.some(x => Number(x.weight)) ? 0 : 1), goalScore(db, g.id, p)])); }
 export function statusCounts(db: DB, krs: Row[], p: Period) {
   const c: Record<string, number> = { 'On track': 0, Behind: 0, 'Off track': 0, 'No update': 0, other: 0 };
   krs.forEach(k => { const s = krState(db, k, p).label; if (s in c) c[s]++; else c.other++; });
@@ -115,7 +116,7 @@ export function KrDrawer({ id, onClose, p: p0 }: { id: string; onClose: () => vo
 }
 
 /* ---------------- Strategy overview ---------------- */
-function IdentityModal({ unit, onClose }: { unit: string; onClose: () => void }) {
+export function IdentityModal({ unit, onClose }: { unit: string; onClose: () => void }) {
   const { db } = useData(); const save = useSave(); const s0 = db?.strategy_statements.find(s => s.unit_id === unit) || {};
   const [f, setF] = useState<Row>({ ...s0, valuesText: ((s0 as Row).values || []).map((v: Row) => v.name + (v.text ? ' — ' + v.text : '')).join('\n') });
   return <Modal title="Edit vision, mission and values" onClose={onClose} wide>

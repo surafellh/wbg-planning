@@ -31,10 +31,13 @@ export function Seg<T extends string | number>({ value, options, onChange }: { v
   return <div className="seg" role="group">{options.map(([v, l]) => <button key={String(v)} className={v === value ? 'on' : ''} onClick={() => onChange(v)}>{l}</button>)}</div>;
 }
 
-export function UnitPicker() {
-  const { can, units, unit, setUnit } = useData();
+/** Unit selector for Group roles. With `allowAll` (pages that can show the whole group) it also offers "All units — Group view". */
+export function UnitPicker({ allowAll }: { allowAll?: boolean } = {}) {
+  const { can, units, unit, setUnit, allUnits, setAllUnits } = useData();
   if (!can('seeGroup')) return null;
-  return <label className="scope"><span>Unit</span><select value={unit || ''} onChange={e => setUnit(e.target.value)} aria-label="Unit">{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>;
+  const v = allowAll && allUnits ? '__all' : unit || '';
+  return <label className="scope"><span>{allowAll ? 'Viewing' : 'Unit'}</span><select value={v} onChange={e => { if (e.target.value === '__all') setAllUnits(true); else { setUnit(e.target.value); if (allowAll) setAllUnits(false); } }} aria-label="Unit">
+    {allowAll && <option value="__all">All units — Group view</option>}{allowAll && <option disabled>──────────</option>}{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>;
 }
 
 export function Cmd({ children, right }: { children?: ReactNode; right?: ReactNode }) { return <div className="cmdbar"><UnitPicker />{children}<span className="sp" />{right}</div>; }
