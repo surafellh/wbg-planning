@@ -329,3 +329,5 @@ select option, select optgroup{color:var(--ink);background-color:var(--panel)}
 .cme{margin:0 12px 10px 60px;padding:8px 10px;border-radius:10px;background:var(--info-soft)}
 .cme small{display:block;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:4px}
 .cnode>.ckids{margin:0 12px 12px 30px}
+.drv{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.drvacts{margin-top:6px;padding-left:14px;border-left:2px solid var(--line2)}

@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
-import { objScore, objState, krsOf, krState, childObjectives, liveObj, currentPeriod, periodLabel, pct, fmt, orgScoreOwn, orgScore, MONTHS, curMonth, qOfMonth, qMonths, personResult, bandOf, workStats, weekStart, ymd, weekLabel, delivScore, subtreeIds, ownShare, type Period } from '../../lib/calc';
+import { objScore, objState, krsOf, krState, childObjectives, liveObj, currentPeriod, periodLabel, pct, fmt, orgScoreOwn, orgScore, MONTHS, curMonth, qOfMonth, qMonths, personResult, bandOf, workStats, weekStart, ymd, weekLabel, delivScore, subtreeIds, ownShare, krDrivers, type Period } from '../../lib/calc';
 import { Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
 import { unitGoalsTree, goalScore, pillarScore, statusCounts } from '../Goals';
 import { isHead, headedOrgs } from './Plan';
@@ -37,7 +37,7 @@ export function OurStrategy() {
         <span style={{ flex: 1 }}><small>{LEVEL[org?.kind || ''] || 'Organisation'} · {org?.name}{mine ? ' · my organisation' : ''}</small><b>{o.text}</b>
           <span className="mini">{ks.length} {t('key_result', true).toLowerCase()}{o.weight_to_parent != null && depth > 0 ? ` · ${fmt(Number(o.weight_to_parent))}% of the ${t('objective').toLowerCase()} above` : ''}{ks.length && kids.length ? ` · score = ${ownShare(db, o)}% own ${t('key_result', true).toLowerCase()} + ${100 - ownShare(db, o)}% below` : ''} · owned by {posName(db, o.owner_position_id)}</span></span>
         <StatePill s={st} /><span className="mini">{isOpen ? '▾' : '▸'}</span></div>
-      {isOpen && ks.length > 0 && <div className="ckrs">{ks.map(k => { const s = krState(db, k, p); return <div key={k.id} className="krline"><span style={{ flex: 1 }}>{k.title}<div className="mini">{fmt(s.actual, 1)} of {fmt(s.target, 1)} {k.uom || ''} · weight {fmt(Number(k.weight) || 0)}%</div></span><Bar p={s.progress} /><StatePill s={s} /></div>; })}</div>}
+      {isOpen && ks.length > 0 && <div className="ckrs">{ks.map(k => { const s = krState(db, k, p); return <div key={k.id} className="krline"><span style={{ flex: 1 }}>{k.title}<div className="mini">{fmt(s.actual, 1)} of {fmt(s.target, 1)} {k.uom || ''} · weight {fmt(Number(k.weight) || 0)}%{(() => { const d = krDrivers(db, k.id); return d.acts.length ? ` · ${d.dels.length} deliverables · ${d.done}/${d.acts.length} weekly tasks done` : ''; })()}</div></span><Bar p={s.progress} /><StatePill s={s} /></div>; })}</div>}
       {mine && <div className="cme"><small>My {t('deliverable', true).toLowerCase()} for this {t('objective').toLowerCase()} · Q{q}</small>{dels.length ? dels.map(d => <div key={d.id} className="krline"><span style={{ flex: 1 }}>{d.title}<div className="mini">{MONTHS[d.month - 1]}{d.weight != null ? ` · ${d.weight}%` : ''}</div></span><Pill tone={d.status === 'accepted' ? 'good' : d.status === 'done' ? 'warn' : d.status === 'returned' ? 'bad' : 'none'}>{d.status}</Pill></div>) : <span className="mini">None yet — <Link to="/plan?tab=deliverables">plan or propose them</Link>.</span>}</div>}
       {kids.length > 0 && <div className="ckids">{kids.map(c => <Obj key={c.id} o={c} depth={depth + 1} />)}</div>}
     </div>;

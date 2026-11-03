@@ -265,6 +265,19 @@ export function personResult(db: DB, pos: Row, p: Period = currentPeriod('Q')) {
   return { s, org, personal, R, basis, hr: R == null ? null : R * Number(db.settings.hr_scale?.max ?? 70), orgLabel: op.label };
 }
 
+/** What drives a key result: its deliverables and the weekly activities linked to them (latest week of each task). */
+export function krDrivers(db: DB, krId: string) {
+  const dels = db.deliverables.filter(d => d.key_result_id === krId && d.status !== 'removed');
+  const delIds = new Set(dels.map(d => d.id));
+  const rows = db.activities.filter(a => (a.deliverable_id && delIds.has(a.deliverable_id)) || (!a.deliverable_id && a.key_result_id === krId));
+  const latest = new Map<string, Row>(); rows.forEach(a => { const key = a.code || a.id; const cur = latest.get(key); if (!cur || a.week_start > cur.week_start) latest.set(key, a); });
+  const acts = Array.from(latest.values());
+  const done = acts.filter(a => a.status === 'Done').length, stuck = acts.filter(a => a.status === 'Stuck' || a.status === 'Delayed').length;
+  const completion = acts.length ? sum(acts.map(a => a.status === 'Done' ? 100 : Number(a.pct) || 0)) / (acts.length * 100) : null;
+  const lastUpdate = rows.reduce((m, a) => (a.updated_at || a.created_at || '') > m ? (a.updated_at || a.created_at) : m, '');
+  return { dels, acts, done, stuck, completion, lastUpdate, weeks: new Set(rows.map(a => a.week_start)).size };
+}
+
 // ---------------- work ----------------
 export function workStats(db: DB, posIds: Set<string>, wk: string) {
   const a = db.activities.filter(x => posIds.has(x.owner_position_id) && x.week_start === wk);
