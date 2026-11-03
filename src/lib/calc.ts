@@ -67,10 +67,26 @@ export function linesOf(db: DB, unit: string, sec?: string) { return db.plan_lin
 export function planBy(db: DB, unit: string, sec: string, months: number[], groups?: string[] | null, base = false, metric: 'value' | 'quantity' = 'value') {
   return sum(linesOf(db, unit, sec).filter(l => !groups || !groups.length || groups.includes(l.line_group)).map(l => sum(months.map(m => (metric === 'quantity' ? lineQty(l, base) : lineVals(l, base))[m - 1]))));
 }
-export function actualBy(db: DB, unit: string, sec: string, months: number[], groups?: string[] | null) {
+/** Actual rows: recorded per line where Finance has line figures, otherwise one figure for the whole group.
+    For a group and month with line figures, any group-level figure is ignored so nothing is counted twice. */
+export function actualRows(db: DB, unit: string, sec: string, months: number[], groups?: string[] | null) {
   const rows = db.actuals.filter(a => a.unit_id === unit && a.section === sec && months.includes(a.month) && (!groups || !groups.length || groups.includes(a.line_group)));
-  return rows.length ? sum(rows.map(r => Number(r.value))) : null;
+  const hasLines = new Set(rows.filter(r => r.line_id).map(r => (r.line_group || '') + '|' + r.month));
+  return rows.filter(r => r.line_id || !hasLines.has((r.line_group || '') + '|' + r.month));
 }
+export function actualBy(db: DB, unit: string, sec: string, months: number[], groups?: string[] | null, metric: 'value' | 'quantity' = 'value') {
+  const f = metric === 'quantity' ? 'qty' : 'value';
+  const rows = actualRows(db, unit, sec, months, groups).filter(r => r[f] != null);
+  return rows.length ? sum(rows.map(r => Number(r[f]))) : null;
+}
+/** Actual of one plan line (null when Finance recorded only a group figure, or nothing). */
+export function lineActual(db: DB, lineId: string, months: number[], metric: 'value' | 'quantity' = 'value') {
+  const f = metric === 'quantity' ? 'qty' : 'value';
+  const rows = db.actuals.filter(a => a.line_id === lineId && months.includes(a.month) && a[f] != null);
+  return rows.length ? sum(rows.map(r => Number(r[f]))) : null;
+}
+/** Whether a group's actuals for these months were recorded per line. */
+export function groupHasLineActuals(db: DB, unit: string, sec: string, grp: string, months: number[]) { return db.actuals.some(a => a.unit_id === unit && a.section === sec && a.line_group === grp && a.line_id && months.includes(a.month)); }
 export function lastActualMonth(db: DB, unit?: string) { let m = 0; db.actuals.forEach(a => { if ((!unit || a.unit_id === unit) && a.value != null && a.month > m) m = a.month; }); return m; }
 
 // ---------------- key results ----------------
@@ -124,7 +140,7 @@ export function krTarget(db: DB, k: Row, p: Period): number | null {
 /** Actual for a period (null when nothing has been recorded yet). */
 export function krActual(db: DB, k: Row, p: Period): number | null {
   const ms = periodMonths(p), a = aggOf(k);
-  if (k.measure === 'plan') { const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id); return l && u ? actualBy(db, u, l.section, ms, l.line_groups) : null; }
+  if (k.measure === 'plan') { const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id); return l && u ? actualBy(db, u, l.section, ms, l.line_groups, l.metric) : null; }
   const mv = monthlyValues(db, k);
   if (a === 'latest') { for (let m = ms[ms.length - 1]; m >= 1; m--) if (mv[m - 1] != null) return mv[m - 1]; return null; }
   return agg(ms.map(m => mv[m - 1]), a);
@@ -157,7 +173,7 @@ export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 
     progress = due.length ? weighted(due.map(d => [Number(d.weight) || 1, isAccepted(db, d) ? 1 : 0])) : null; toDate = true;
   } else if (k.measure === 'plan') {
     const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id);
-    if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups) : null; const t2 = done.length ? planBy(db, u, l.section, done, l.line_groups, false, l.metric) : null; progress = ratioFor(k, actual, t2); toDate = true; }
+    if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups, l.metric) : null; const t2 = done.length ? planBy(db, u, l.section, done, l.line_groups, false, l.metric) : null; progress = ratioFor(k, actual, t2); toDate = true; }
   } else { target = krTarget(db, k, p); actual = krActual(db, k, p); progress = ratioFor(k, actual, target); }
   const st = statusFor(db, progress, k.confidence, e, toDate);
   const r: KrState = { target, actual, progress, expected: e, toDate, ...st };
@@ -288,7 +304,7 @@ export function workStats(db: DB, posIds: Set<string>, wk: string) {
 }
 
 // ---------------- statements ----------------
-export type Stmt = { key?: string; label: string; plan: number; act: number | null; base: number; bold?: boolean; indent?: boolean; cost?: boolean };
+export type Stmt = { sec?: string; grp?: string; key?: string; label: string; plan: number; act: number | null; base: number; bold?: boolean; indent?: boolean; cost?: boolean };
 const isDA = (g: string) => /depreciation|amorti/i.test(g); const isFin = (g: string) => /financ|interest|bank charge/i.test(g);
 /** Income statement from the annual plan, down to net income. Tax is applied at the configured rate on positive profit before tax. */
 export function incomeStatement(db: DB, units: string[], months: number[], detail = true): Stmt[] {
@@ -299,13 +315,13 @@ export function incomeStatement(db: DB, units: string[], months: number[], detai
   const add = (a: number | null, b: number | null, sign = 1) => a == null && b == null ? null : (a || 0) + sign * (b || 0);
   const row = (label: string, sec: string, g?: string[], extra: Partial<Stmt> = {}): Stmt => ({ label, plan: P(sec, g), act: A(sec, g), base: B(sec, g), ...extra });
   const rows: Stmt[] = [];
-  if (detail) groups('rev').forEach(g => rows.push(row(g, 'rev', [g], { indent: true })));
+  if (detail) groups('rev').forEach(g => rows.push(row(g, 'rev', [g], { ...{ indent: true }, sec: 'rev', grp: g })));
   const rev = row('Revenue', 'rev', undefined, { bold: true, key: 'rev' }); rows.push(rev);
-  if (detail) groups('cos').forEach(g => rows.push(row(g, 'cos', [g], { indent: true, cost: true })));
+  if (detail) groups('cos').forEach(g => rows.push(row(g, 'cos', [g], { ...{ indent: true, cost: true }, sec: 'cos', grp: g })));
   const cos = row('Cost of sales', 'cos', undefined, { key: 'cos', cost: true }); rows.push(cos);
   const gp: Stmt = { key: 'gp', label: 'Gross profit', plan: rev.plan - cos.plan, act: add(rev.act, cos.act, -1), base: rev.base - cos.base, bold: true }; rows.push(gp);
   const og = groups('opex'); const opG = og.filter(g => !isDA(g) && !isFin(g)); const daG = og.filter(isDA); const finG = og.filter(isFin);
-  if (detail) opG.forEach(g => rows.push(row(g, 'opex', [g], { indent: true, cost: true })));
+  if (detail) opG.forEach(g => rows.push(row(g, 'opex', [g], { indent: true, cost: true, sec: 'opex', grp: g })));
   const opex = opG.length ? row('Operating expenses', 'opex', opG, { key: 'opex', cost: true }) : { key: 'opex', label: 'Operating expenses', plan: 0, act: null, base: 0, cost: true }; rows.push(opex);
   const ebitda: Stmt = { key: 'ebitda', label: 'EBITDA', plan: gp.plan - opex.plan, act: add(gp.act, opex.act, -1), base: gp.base - opex.base, bold: true }; rows.push(ebitda);
   const da = daG.length ? row('Depreciation & amortisation', 'opex', daG, { key: 'da', cost: true }) : { key: 'da', label: 'Depreciation & amortisation', plan: 0, act: null, base: 0, cost: true }; rows.push(da);
@@ -341,6 +357,27 @@ export function cashFlow(db: DB, units: string[]) {
 }
 
 // ---------------- resources waterline ----------------
+/** Spending needs by line for a set of months, grouped by budget group, in payment order:
+    committed lines first (the lines marked "must pay"), then groups in the unit's priority order and, inside a group, lines in their own order.
+    Amounts are the plan in force — after approved rescopes — not the original baseline. */
+export type NeedLine = { key: string; gkey: string; line: Row; sec: string; grp: string; amount: number; base: number; must: boolean; rank: number; cum: number; tier: string };
+export type NeedGroup = { key: string; sec: string; grp: string; rank: number; amount: number; lines: NeedLine[]; committed: NeedLine[] };
+export const NEED_SECS = ['cos', 'opex', 'capex', 'proj'];
+export function needLines(db: DB, unit: string, months: number[], funds: { confirmed: number; expected: number }) {
+  const rank = (k: string, d = 999) => db.need_priority.find(n => n.unit_id === unit && n.need_key === k)?.rank ?? d;
+  const groups = new Map<string, NeedGroup>();
+  linesOf(db, unit).filter(l => NEED_SECS.includes(l.section)).sort((a, b) => (a.sort || 0) - (b.sort || 0)).forEach((l, i) => {
+    const grp = l.line_group || 'Other', gkey = `${l.section}|${grp}`; const amount = sum(months.map(m => lineVals(l)[m - 1])); if (amount <= 0) return;
+    const g = groups.get(gkey) || { key: gkey, sec: l.section, grp, rank: rank(gkey), amount: 0, lines: [], committed: [] };
+    const n: NeedLine = { key: `${gkey}|${l.id}`, gkey, line: l, sec: l.section, grp, amount, base: sum(months.map(m => lineVals(l, true)[m - 1])), must: !!l.must_pay, rank: rank(`${gkey}|${l.id}`, 1000 + i), cum: 0, tier: '' };
+    g.amount += amount; (n.must ? g.committed : g.lines).push(n); groups.set(gkey, g);
+  });
+  const list = Array.from(groups.values()).sort((a, b) => a.rank - b.rank || NEED_SECS.indexOf(a.sec) - NEED_SECS.indexOf(b.sec));
+  list.forEach(g => g.lines.sort((a, b) => a.rank - b.rank));
+  const order = [...list.flatMap(g => g.committed), ...list.flatMap(g => g.lines)]; let run = 0;
+  order.forEach(n => { run += n.amount; n.cum = run; n.tier = run <= Number(funds.confirmed) ? 'Funded' : run <= Number(funds.confirmed) + Number(funds.expected) ? 'Conditional' : 'Backlog'; });
+  return { groups: list, order, total: run };
+}
 export function needsFor(db: DB, unit: string, q: number) {
   const ms = qMonths(q); const keys = new Map<string, { key: string; sec: string; grp: string; amount: number; must: boolean }>();
   for (const l of linesOf(db, unit)) {

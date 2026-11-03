@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData, useSave, byId, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { needsFor, money, sum, lineVals, linesOf, currentQ, MONTHS, monthStart, ymd, qMonths, actualBy } from '../lib/calc';
+import { needLines, lineActual, NEED_SECS, money, sum, lineVals, linesOf, currentQ, MONTHS, monthStart, ymd, qMonths, actualBy, type NeedGroup, type NeedLine } from '../lib/calc';
 import { Page, Cmd, Seg, NumIn, Pill, Empty, Modal } from '../lib/ui';
 import { openRescope } from './AnnualPlan';
 import { planStatus } from './OkrPlan';
@@ -35,39 +35,48 @@ export function PlanCalendar() {
 }
 
 export function Resources() {
-  const { db, unit, can } = useData(); const save = useSave(); const [q, setQ] = useState<number>(() => (db ? currentQ(db) : 1));
+  const { db, unit, can } = useData(); const save = useSave(); const [q, setQ] = useState<number>(() => (db ? currentQ(db) : 1)); const [open, setOpen] = useState<Set<string>>(new Set());
   if (!db || !unit) return null;
-  const { funds, list } = needsFor(db, unit, q);
+  const f = db.funds.find(x => x.unit_id === unit && x.quarter === q) || { confirmed: 0, expected: 0 }; const funds = { confirmed: Number(f.confirmed), expected: Number(f.expected) };
+  const ms = qMonths(q); const { groups, order, total } = needLines(db, unit, ms, funds);
   const edit = can('editPlan');
-  const move = async (i: number, d: number) => {
-    const order = list.filter(n => !n.must).map(n => n.key); const k = list[i].key; const j = order.indexOf(k); const t = j + d;
-    if (j < 0 || t < 0 || t >= order.length) return;
-    [order[j], order[t]] = [order[t], order[j]];
-    await save(() => sb.from('need_priority').upsert(order.map((key, r) => ({ unit_id: unit, fiscal_year: '2026/27', need_key: key, rank: r + 1 }))), ['need_priority']);
-  };
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const rankAll = (keys: string[]) => save(() => sb.from('need_priority').upsert(keys.map((key, r) => ({ unit_id: unit, fiscal_year: '2026/27', need_key: key, rank: r + 1 }))), ['need_priority']);
+  const moveGroup = (i: number, d: number) => { const keys = groups.map(g => g.key); const t = i + d; if (t < 0 || t >= keys.length) return; [keys[i], keys[t]] = [keys[t], keys[i]]; rankAll(keys); };
+  const moveLine = (g: NeedGroup, i: number, d: number) => { const keys = g.lines.map(n => n.key); const t = i + d; if (t < 0 || t >= keys.length) return; [keys[i], keys[t]] = [keys[t], keys[i]]; rankAll(keys); };
+  const setMust = (n: NeedLine, v: boolean) => save(() => sb.from('plan_lines').update({ must_pay: v }).eq('id', n.line.id), ['plan_lines'], v ? 'Marked as committed' : 'No longer committed');
   const setFund = (k: 'confirmed' | 'expected', v: number | null) => save(() => sb.from('funds').upsert({ unit_id: unit, fiscal_year: '2026/27', quarter: q, confirmed: k === 'confirmed' ? v || 0 : funds.confirmed, expected: k === 'expected' ? v || 0 : funds.expected }), ['funds'], 'Funds updated');
-  const tot = (t: string) => sum(list.filter(n => n.tier === t).map(n => n.amount));
-  const allocated = (n: any) => actualBy(db, unit, n.sec, qMonths(q), [n.grp]);
-  let waterDrawn = false;
-  return <Page title="Resources" desc="Which planned spending the quarter's money covers — and what was actually spent." help={<>
-    <h3>The waterline</h3><p>For each quarter, the money the unit can count on is <b>confirmed</b> funds plus <b>expected</b> funds (likely but not certain). Planned spending is listed in order: <b>committed costs first</b> (salaries and other operating costs that must be paid), then the other needs in the unit's priority order.</p>
+  const tot = (t: string) => sum(order.filter(n => n.tier === t).map(n => n.amount));
+  const pending = db.rescopes.filter(r => r.unit_id === unit && r.status === 'Submitted' && r.kind !== 'okr_targets' && (r.changes || []).some((c: Row) => NEED_SECS.includes(c.section)));
+  const tierPill = (t: string) => <Pill tone={t === 'Funded' ? 'good' : t === 'Conditional' ? 'warn' : 'bad'}>{t}</Pill>;
+  const groupTier = (ns: NeedLine[]) => { const ts = new Set(ns.map(n => n.tier)); return ts.size === 1 ? tierPill(ns[0].tier) : <Pill tone="warn">{ns.filter(n => n.tier === 'Funded').length} of {ns.length} funded</Pill>; };
+  const lineRow = (n: NeedLine, g: NeedGroup | null, i: number) => { const a = lineActual(db, n.line.id, ms); const res = Math.abs(n.amount - n.base) > 0.5;
+    return <tr key={n.key} className={'wl2 ' + (n.tier === 'Funded' ? 'fund' : n.tier === 'Conditional' ? 'cond' : 'back')}>
+      <td className="ind"><span className="row" style={{ gap: 4 }}>{edit && g && <><button className="btn sm" aria-label="Move up" disabled={i === 0} onClick={() => moveLine(g, i, -1)}>↑</button><button className="btn sm" aria-label="Move down" disabled={i === g.lines.length - 1} onClick={() => moveLine(g, i, 1)}>↓</button></>}<span>{n.line.name}{res && <div className="mini" data-tip="The plan in force after an approved rescope; the original approved amount is shown for reference.">rescoped · was {money(n.base)}</div>}</span></span></td>
+      <td className="n">{money(n.amount)}</td><td className="n mini">{a == null ? '—' : money(a)}</td><td>{tierPill(n.tier)}</td><td className="n mini">{money(n.cum)}</td>
+      <td>{edit ? <label className="mini row" style={{ gap: 4 }}><input type="checkbox" checked={n.must} onChange={e => setMust(n, e.target.checked)} />must pay</label> : n.must ? <Pill>committed</Pill> : ''}</td></tr>; };
+  const allKeys = groups.map(g => g.key);
+  return <Page title="Resources" desc="Which planned spending the quarter's money covers — line by line — and what was actually spent." help={<>
+    <h3>The waterline</h3><p>For each quarter, the money the unit can count on is <b>confirmed</b> funds plus <b>expected</b> funds (likely but not certain). Planned spending is paid in this order: <b>committed lines first</b> (the lines marked "must pay", such as salaries and rent), then the budget groups in the unit's priority order and, inside each group, its lines in their own order.</p>
     <ul><li><b>Funded</b> — covered by confirmed funds.</li><li><b>Conditional</b> — covered only if the expected funds arrive.</li><li><b>Backlog</b> — below the waterline: not covered this quarter. Move it up, cut it, or rescope.</li></ul>
-    <p>Use the arrows to change the priority of the needs that are not committed. "Actual" is what Finance recorded as spent in the quarter, so allocated and actual sit side by side. When the gap is large, start a rescope.</p></>}>
-    <Cmd right={<Seg value={q} options={[1, 2, 3, 4].map(x => [x, 'Q' + x] as [number, string])} onChange={setQ} />} />
+    <p>Groups are collapsed to keep the list short; open one to order its lines, because not every line in a group may get money. Amounts are the plan in force: once a rescope is approved, the rescoped amount is used (the original is shown underneath). "Actual" is what Finance recorded as spent.</p></>}>
+    <Cmd right={<><button className="btn sm" onClick={() => setOpen(new Set(open.size ? [] : ['committed', ...allKeys]))}>{open.size ? 'Collapse all' : 'Expand all'}</button><Seg value={q} options={[1, 2, 3, 4].map(x => [x, 'Q' + x] as [number, string])} onChange={setQ} /></>} />
     <div className="g4" style={{ marginBottom: 14 }}>
-      <div className="tile good"><div className="tv">{money(Number(funds.confirmed))}</div><div className="tl">Confirmed funds</div>{edit && <div className="ts">Change: <NumIn value={Number(funds.confirmed)} onChange={v => setFund('confirmed', v)} w={130} /></div>}</div>
-      <div className="tile warn"><div className="tv">{money(Number(funds.expected))}</div><div className="tl">Expected funds</div>{edit && <div className="ts">Change: <NumIn value={Number(funds.expected)} onChange={v => setFund('expected', v)} w={130} /></div>}</div>
-      <div className="tile"><div className="tv">{money(sum(list.map(n => n.amount)))}</div><div className="tl">Planned spending</div><div className="ts">Funded {money(tot('Funded'))} · Conditional {money(tot('Conditional'))}</div></div>
-      <div className={'tile ' + (tot('Backlog') ? 'bad' : 'good')}><div className="tv">{money(tot('Backlog'))}</div><div className="tl">Below the waterline</div></div>
+      <div className="tile good"><div className="tv">{money(funds.confirmed)}</div><div className="tl">Confirmed funds</div>{edit && <div className="ts">Change: <NumIn value={funds.confirmed} onChange={v => setFund('confirmed', v)} w={130} /></div>}</div>
+      <div className="tile warn"><div className="tv">{money(funds.expected)}</div><div className="tl">Expected funds</div>{edit && <div className="ts">Change: <NumIn value={funds.expected} onChange={v => setFund('expected', v)} w={130} /></div>}</div>
+      <div className="tile"><div className="tv">{money(total)}</div><div className="tl">Planned spending</div><div className="ts">Funded {money(tot('Funded'))} · Conditional {money(tot('Conditional'))}</div></div>
+      <div className={'tile ' + (tot('Backlog') ? 'bad' : 'good')}><div className="tv">{money(tot('Backlog'))}</div><div className="tl">Below the waterline</div><div className="ts">{order.filter(n => n.tier === 'Backlog').length} lines</div></div>
     </div>
-    {!list.length ? <Empty>No planned spending for Q{q}.</Empty> : <div className="card" style={{ padding: 0 }}>
-      <div className="wl" style={{ fontWeight: 700, color: 'var(--muted)', fontSize: 12 }}><span>Need</span><span className="num">Planned</span><span className="num">Actual</span><span className="num">Running total</span></div>
-      {list.map((n, i) => { const water = !waterDrawn && n.tier !== 'Funded' && (waterDrawn = true);
-        return <div key={n.key} className={'wl ' + (n.tier === 'Funded' ? 'fund' : n.tier === 'Conditional' ? 'cond' : 'back') + (water ? ' water' : '')}>
-          <span className="row">{edit && !n.must && <><button className="btn sm" aria-label="Move up" onClick={() => move(i, -1)}>↑</button><button className="btn sm" aria-label="Move down" onClick={() => move(i, 1)}>↓</button></>}
-            <span><b>{n.grp}</b> <span className="note">{SECN[n.sec]}</span></span>{n.must && <Pill>committed</Pill>}<Pill tone={n.tier === 'Funded' ? 'good' : n.tier === 'Conditional' ? 'warn' : 'bad'}>{n.tier}</Pill></span>
-          <span className="num">{money(n.amount)}</span><span className="num">{money(allocated(n))}</span><span className="num">{money(n.cum)}</span></div>; })}
-    </div>}
+    {pending.length > 0 && <div className="banner warn">A rescope is waiting for approval. The amounts here change to the rescoped figures once it is approved.</div>}
+    {!order.length ? <Empty>No planned spending for Q{q}.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Budget group / line</th><th className="n">Planned (in force)</th><th className="n">Actual</th><th>Waterline</th><th className="n">Running total</th><th>Committed</th></tr></thead><tbody>
+      {(() => { const c = groups.flatMap(g => g.committed); if (!c.length) return null; const on = open.has('committed');
+        return [<tr key="c" className="g click" onClick={() => toggle('committed')}><td><b>{on ? '▾' : '▸'} Committed costs</b> <span className="mini">{c.length} lines · paid first</span></td><td className="n">{money(sum(c.map(n => n.amount)))}</td><td /><td>{groupTier(c)}</td><td className="n mini">{money(c[c.length - 1].cum)}</td><td /></tr>,
+          ...(on ? c.map(n => lineRow({ ...n, line: { ...n.line, name: `${n.line.name} · ${n.grp}` } }, null, 0)) : [])]; })()}
+      {groups.filter(g => g.lines.length).map((g, gi) => { const on = open.has(g.key); const a = actualBy(db, unit, g.sec, ms, [g.grp]); const idx = groups.indexOf(g);
+        return [<tr key={g.key} className="g click" onClick={() => toggle(g.key)}><td><span className="row" style={{ gap: 4 }}>{edit && <><button className="btn sm" aria-label="Move group up" disabled={gi === 0} onClick={e => { e.stopPropagation(); moveGroup(idx, -1); }}>↑</button><button className="btn sm" aria-label="Move group down" onClick={e => { e.stopPropagation(); moveGroup(idx, 1); }}>↓</button></>}<b>{on ? '▾' : '▸'} {g.grp}</b> <span className="mini">{SECN[g.sec]} · {g.lines.length} line{g.lines.length > 1 ? 's' : ''}</span></span></td>
+          <td className="n">{money(sum(g.lines.map(n => n.amount)))}</td><td className="n mini">{a == null ? '—' : money(a)}</td><td>{groupTier(g.lines)}</td><td className="n mini">{money(g.lines[g.lines.length - 1].cum)}</td><td /></tr>,
+          ...(on ? g.lines.map((n, i) => lineRow(n, g, i)) : [])]; })}
+    </tbody></table></div>}
   </Page>;
 }
 

@@ -50,16 +50,20 @@ export function SaveBar({ dirty, onSave, onDiscard, label = 'Unsaved changes', b
 }
 
 /* ---------- Quarter targets (heads) ---------- */
-function Targets() {
+export function Targets({ unitId, orgId }: { unitId?: string; orgId?: string } = {}) {
   const { db, me, role, can, user } = useData(); const W = useWindows(); const save = useSave(); const { t } = useTerms(); const [mode, setMode] = useState<'Q' | 'M'>('Q'); const [busy, setBusy] = useState(false);
-  const krs = useMemo(() => { if (!db || !me) return []; const mine = headedOrgs(db, me, role); return workKrs(db, me, true).filter(x => mine.has(x.o.org_unit_id) && (x.k.measure === 'manual' || x.k.measure === 'deliverables')); }, [db, me, role]);
+  const krs = useMemo(() => { if (!db || !me) return [];
+    const editable = (x: { k: Row }) => x.k.measure === 'manual' || x.k.measure === 'deliverables';
+    if (unitId) { const sub = orgId ? subtreeIds(db, orgId) : null; return db.objectives.filter(o => o.unit_id === unitId && o.level !== 'individual' && liveObj(o) && (!sub || sub.has(o.org_unit_id))).flatMap(o => krsOf(db, o.id).map(k => ({ k, o }))).filter(editable); }
+    const mine = headedOrgs(db, me, role); return workKrs(db, me, true).filter(x => mine.has(x.o.org_unit_id) && editable(x)); }, [db, me, role, unitId, orgId]);
   const source = useMemo(() => db ? krs.map(({ k, o }) => { const r: Row = { id: k.id, obj: o.text, title: k.title, uom: k.uom, how: AGG_NAME[k.aggregation || 'sum']?.split(' (')[0], year: k.year_target, mode: k.target_mode };
     [1, 2, 3, 4].forEach(q => { r['q' + q] = db.kr_targets.find(x => x.kr_id === k.id && x.quarter === q)?.target ?? null; });
     for (let m = 1; m <= 12; m++) r['m' + m] = db.kr_month_targets.find(x => x.kr_id === k.id && x.month === m)?.target ?? null;
     return r; }) : [], [db, krs]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
-  const okrApproved = planStatus(db, me.unit_id, 'okr')?.status === 'Approved' && !can('approve') && db.settings.approvals?.target_changes !== false;
+  const tUnit = unitId || me.unit_id;
+  const okrApproved = planStatus(db, tUnit, 'okr')?.status === 'Approved' && !can('approve') && db.settings.approvals?.target_changes !== false;
   const rows: Row[] = []; let last = ''; d.rows.forEach(r => { if (r.obj !== last) { rows.push({ _header: r.obj }); last = r.obj; } rows.push(r); });
   const map = rows.map(r => r._header ? -1 : d.rows.indexOf(r));
   const cols: Col[] = [{ key: 'title', label: t('key_result'), type: 'ro', width: 320 }, { key: 'uom', label: 'Unit', type: 'ro', width: 70 }, { key: 'how', label: 'Combine', type: 'ro', width: 110, tip: 'How months add up to a quarter: adds up, average or latest value. Set in the objective planner.' },
@@ -69,13 +73,13 @@ function Targets() {
     for (const r of d.rows.filter(r => r._dirty)) { const s0 = source.find(x => x.id === r.id)!;
       for (const key of ['year', ...[1, 2, 3, 4].map(q => 'q' + q), ...Array.from({ length: 12 }, (_, i) => 'm' + (i + 1))]) if (r[key] !== s0[key]) changes.push({ kr_id: r.id, key, old: s0[key], new: r[key], label: `${r.title} · ${key.toUpperCase()}` }); }
     if (okrApproved) { // approved plan: changes become a rescope request
-      const ok = await save(() => sb.from('rescopes').insert({ unit_id: me!.unit_id, kind: 'okr_targets', trigger: 'Target change', status: 'Submitted', changes, by_user: user.id, note: `${changes.length} target change(s) by ${me!.holder_name}` }), ['rescopes'], 'Sent to Group Strategy for approval');
+      const ok = await save(() => sb.from('rescopes').insert({ unit_id: tUnit, kind: 'okr_targets', trigger: 'Target change', status: 'Submitted', changes, by_user: user.id, note: `${changes.length} target change(s) by ${me!.holder_name}` }), ['rescopes'], 'Sent to Group Strategy for approval');
       if (ok) d.reset(); setBusy(false); return;
     }
     await applyTargetChanges(changes); await save(() => Promise.resolve({ error: null }) as any, ['key_results', 'kr_targets', 'kr_month_targets'], 'Targets saved'); setBusy(false);
   }
   return <div className="stack">
-    <div className="row"><p className="note" style={{ flex: 1 }}>Set the targets for the {t('key_result', true).toLowerCase()} of the organisation you lead and the levels below it. {okrApproved ? 'The plan is approved, so changes go to Group Strategy as a change request.' : 'Enter by quarter or by month; the year target is for reference.'} Results measured from the annual plan take their targets from the revenue plan or budget.</p><Seg value={mode} options={[['Q', 'By quarter'], ['M', 'By month']]} onChange={setMode} />
+    <div className="row"><p className="note" style={{ flex: 1 }}>Set the targets for the {t('key_result', true).toLowerCase()} {unitId ? 'of this unit (checked-in and deliverable-based ones)' : 'of the organisation you lead and the levels below it'}. {okrApproved ? 'The plan is approved, so changes go to Group Strategy as a change request.' : 'Enter by quarter or by month; the year target is for reference.'} Results measured from the annual plan take their targets from the revenue plan or budget.</p><Seg value={mode} options={[['Q', 'By quarter'], ['M', 'By month']]} onChange={setMode} />
       {W.item('okr') && <Link className="btn sm" to="/studio/okr">Add or change {t('objective', true).toLowerCase()} →</Link>}</div>
     {!krs.length ? <Empty>No {t('key_result', true).toLowerCase()} for your organisation yet.</Empty> : <Sheet cols={cols} rows={rows} onChange={(i, k, v) => { const j = map[i]; if (j >= 0) { d.change(j, k, v); d.change(j, 'mode', k.startsWith('m') && k !== 'mode' ? 'monthly' : k.startsWith('q') ? 'quarterly' : d.rows[j].mode); } }} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} label={okrApproved ? 'Changes will be sent for approval' : 'Unsaved target changes'} />

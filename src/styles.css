@@ -331,3 +331,11 @@ select option, select optgroup{color:var(--ink);background-color:var(--panel)}
 .cnode>.ckids{margin:0 12px 12px 30px}
 .drv{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .drvacts{margin-top:6px;padding-left:14px;border-left:2px solid var(--line2)}
+/* resources waterline by line */
+tr.wl2 td:first-child{box-shadow:inset 4px 0 var(--line2)}
+tr.wl2.fund td:first-child{box-shadow:inset 4px 0 var(--good)}tr.wl2.cond td:first-child{box-shadow:inset 4px 0 var(--warn)}tr.wl2.back td:first-child{box-shadow:inset 4px 0 var(--bad)}
+tr.wl2{border-left:0}
+.hbtn{background:none;border:0;color:inherit;font:inherit;font-weight:700;cursor:pointer;padding:0;text-align:left}
+tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-left:40px}
+.tgl{background:none;border:1px solid var(--line2);border-radius:5px;width:18px;height:18px;line-height:14px;padding:0;margin-right:4px;font-size:10px;color:var(--muted);cursor:pointer;vertical-align:1px}
+.tgl:hover{color:var(--ink);border-color:var(--muted)}.tgl0{display:inline-block;width:22px}
