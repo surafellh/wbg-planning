@@ -1,10 +1,11 @@
 // Walk the app as each role on mock data: nav items, page tabs, editable cells, empty states, errors, screenshots.
 const { chromium } = require('playwright'); const fs = require('fs'); const path = require('path'); const http = require('http');
 const ROOT = path.join(__dirname, '..'); const DIST = path.join(ROOT, 'dist'); const OUT = path.join(ROOT, 'shots', 'roles');
-const base = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/pilot_bundle.json')));
+const LIVE = !!process.env.LIVE; const base = JSON.parse(fs.readFileSync(path.join(ROOT, LIVE ? 'data/live_bundle.json' : 'data/pilot_bundle.json')));
 const UID = '11111111-1111-1111-1111-111111111111';
 function fixture(posPick) {
   const T = JSON.parse(JSON.stringify(base));
+  if (LIVE) { ['profiles','kr_targets','kr_plan_links','scorecards','scorecard_items','kpis','kpi_values','comments','notifications','position_claims','kr_month_targets','week_reviews','messages','fund_months','need_schedule','need_plan','audit_log'].forEach(k => T[k] = T[k] || []); T.profiles = [{ id: UID, email: 'x@y', full_name: 'Tester' }]; const me = posPick(T); if (!me) return { T, me }; T.positions.forEach(p => { p.user_id = p.id === me.id ? UID : null; }); return { T, me }; }
   T.app_settings = [['org_weights', { unit: 70, department: 60, division: 50, employee: 30 }], ['hr_scale', { max: 70 }], ['status_thresholds', { on_track: 95, off_track: 70 }], ['bands', [{ name: 'Achieved', min: 100 }, { name: 'Well performed', min: 75 }, { name: 'Partially achieved', min: 40 }, { name: 'Under performed', min: 0 }]], ['current', { fiscal_year: '2026/27', quarter: 2 }], ['status_method', { method: 'pace', grace_pct: 15 }], ['framework', { type: 'okr', labels: {} }],
     ['windows', { insights: ['super_admin', 'group_strategy', 'executive', 'unit_head', 'planning_head', 'finance', 'dept_head', 'div_head'], studio: ['super_admin', 'group_strategy', 'planning_head', 'finance', 'unit_head', 'dept_head', 'div_head'], studio_admin: ['super_admin', 'group_strategy'] }], ['tax_rate', { rate: 30 }], ['work_rules', { activities: 'both' }]].map(([key, value]) => ({ key, value }));
   T.profiles = [{ id: UID, email: 'x@y', full_name: 'Tester' }];
@@ -22,7 +23,18 @@ function fixture(posPick) {
   T.activities = team.flatMap((p, i) => [0, 1].map(j => ({ id: 'a' + i + j, unit_id: me.unit_id, owner_position_id: p.id, week_start: ws, title: 'Activity ' + i + '.' + j, deliverable_id: 'd' + i, status: ['Done', 'Stuck'][j], pct: [100, 20][j], blocker: j ? 'Waiting' : null, created_at: '2026-10-25', updated_at: '2026-10-26' })));
   return { T, me };
 }
-const PICKS = {
+const byName = (role, n) => T => T.positions.find(p => p.role === role && (p.holder_name || '').toLowerCase().includes(n));
+const PICKS = process.env.LIVE ? {
+  'surafel-admin': byName('super_admin', 'surafel'),
+  'ataklti-strategy': byName('group_strategy', 'ataklti'),
+  'wanza-unit-head': T => T.positions.find(p => p.role === 'unit_head' && p.title.includes('Wanza')),
+  'trucksload-unit-head': byName('unit_head', 'berhane'),
+  'trucksload-dept-head': T => { const u = T.org_units.find(o => o.code === 'trucksload'); return T.positions.find(p => p.role === 'dept_head' && p.unit_id === u.id && p.holder_name && T.objectives.some(o => o.owner_position_id === p.id)); },
+  'we-finance': byName('finance', 'fasika'),
+  'we-team-member': T => { const u = T.org_units.find(o => o.code === 'wagwago-electric'); return T.positions.find(p => p.role === 'employee' && p.unit_id === u.id && p.holder_name && T.activities.some(a => a.owner_position_id === p.id)); },
+  'gff-unit-head': byName('unit_head', 'kbreab'),
+  'executive': T => T.positions.find(p => p.role === 'executive'),
+} : {
   'team-member': T => T.positions.find(p => p.role === 'employee' && p.holder_name && T.org_units.find(o => o.id === p.org_unit_id)?.kind === 'department' && T.objectives.some(o => o.org_unit_id === p.org_unit_id)),
   'division-head': T => T.positions.find(p => p.role === 'div_head' && p.holder_name),
   'department-head': T => T.positions.find(p => p.role === 'dept_head' && p.holder_name && T.objectives.some(o => o.org_unit_id === p.org_unit_id)),

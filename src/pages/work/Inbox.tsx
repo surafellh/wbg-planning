@@ -8,6 +8,7 @@ import { HowItWorks, Pill, Modal, Empty, Ring, Bar, NumIn, StatePill } from '../
 import { AcceptForm, teamOf, WeekReview, MyWeekCompact } from '../Work';
 import { PersonDrawer } from '../Performance';
 import { weeksOfMonth } from './Plan';
+import { StatusBar } from '../OkrPlan';
 
 /** Build a proposed scorecard for a person for a quarter: their deliverables in the quarter and the key results they own. */
 export async function proposeScorecard(db: DB, pos: Row, q: number, userId: string) {
@@ -138,6 +139,14 @@ type Step = { label: string; done: boolean | null; detail: string; to: string; w
 function cycleSteps(db: DB, me: Row, role: string, t: (k: string, pl?: boolean) => string): Step[] {
   const cm = curMonth(); const q = qOfMonth(cm); const wk = ymd(weekStart(new Date())); const cut = cutoffOf(weekStart(new Date())).toISOString();
   const head = role !== 'employee'; const out: Step[] = [];
+  if (role === 'executive') {
+    // top management does not plan deliverables or weeks here: it reviews the Group and gives final approval
+    const end = db.plan_status.filter(s => s.status === 'Endorsed').length; const rs = db.rescopes.filter(r => r.status === 'Submitted').length;
+    out.push({ label: 'Give final approval to endorsed plans', done: end === 0, detail: end ? `${end} waiting — listed below` : 'Nothing waiting', to: '/today' });
+    out.push({ label: `Review Group performance for Q${q}`, done: null, detail: 'Every unit, its objectives, financials and people', to: '/insights/group' });
+    if (rs) out.push({ label: 'Rescopes under review', done: null, detail: `${rs} submitted — Group Strategy decides`, to: '/insights/reports' });
+    return out;
+  }
   const myDel = db.deliverables.filter(d => d.owner_position_id === me.id && d.month === cm && d.status !== 'removed');
   const acts = db.activities.filter(a => a.owner_position_id === me.id && a.week_start === wk);
   const mk = weeksOfMonth(cm).map(w => ymd(w)); const monthLocked = db.activities.some(a => a.owner_position_id === me.id && a.locked && mk.includes(a.week_start));
@@ -168,28 +177,33 @@ function cycleSteps(db: DB, me: Row, role: string, t: (k: string, pl?: boolean) 
   const due = myDel.filter(d => d.status === 'planned' || d.status === 'returned');
   if (myDel.length) out.push({ label: `Deliver your ${t('deliverable', true).toLowerCase()} with evidence`, done: due.length === 0, detail: due.length ? `${due.length} not delivered yet` : 'All delivered', to: '/record?tab=deliverables' });
   out.push({ label: `Agree your Q${q} scorecard`, done: sc ? sc.status === 'Agreed' : null, detail: !sc ? 'Not prepared yet by your manager' : sc.status === 'Agreed' ? 'Agreed' : sc.status === 'Proposed' ? 'Waiting for you' : 'Under discussion', to: '/me' });
-  if (canEnterActuals(db, me, role)) { const u = me.unit_id; const lm = Math.max(1, cm - 1); const has = db.actuals.some(a => a.unit_id === u && a.month === lm);
+  if (canEnterActuals(db, me, role) && db.plan_lines.some(l => l.unit_id === me.unit_id)) { const u = me.unit_id; const lm = Math.max(1, cm - 1); const has = db.actuals.some(a => a.unit_id === u && a.month === lm);
     out.push({ label: `Enter ${MONTHS[lm - 1]} financial actuals`, done: has, detail: has ? 'Entered' : 'Revenue, cost of sales and budget lines', to: '/record?tab=finance', who: 'Finance' }); }
   return out;
 }
 const headedOrgsT = (db: DB, me: Row, role: string) => { const ids = new Set<string>(); const root = me.level === 'unit' || ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'].includes(role) ? me.unit_id : me.org_unit_id; ids.add(root); let grew = true; while (grew) { grew = false; db.org_units.forEach(u => { if (u.parent_id && ids.has(u.parent_id) && !ids.has(u.id)) { ids.add(u.id); grew = true; } }); } return ids; };
 
 export function Today() {
-  const { db, me, role } = useData(); const { t } = useTerms(); if (!db || !me) return null;
+  const ctx = useData(); const { db, me, role } = ctx; const { t } = useTerms(); if (!db || !me) return null;
   const ws = weekStart(new Date()); const wk = ymd(ws); const acts = db.activities.filter(a => a.owner_position_id === me.id && a.week_start === wk); const st = workStats(db, new Set([me.id]), wk);
   const p = currentPeriod('Q');
-  const deptKrs = db.key_results.filter(k => (k.state || 'active') === 'active' && db.objectives.some(o => o.id === k.objective_id && o.org_unit_id === me.org_unit_id && o.status !== 'Archived' && o.level !== 'individual'));
+  const scopeOrgs = role !== 'employee' ? headedOrgsT(db, me, role) : new Set<string>([me.org_unit_id]);
+  const deptKrs = db.key_results.filter(k => (k.state || 'active') === 'active' && db.objectives.some(o => o.id === k.objective_id && scopeOrgs.has(o.org_unit_id) && o.status !== 'Archived' && o.level !== 'individual'));
   const sts = deptKrs.map(k => krState(db, k, p)); const onT = sts.filter(s => s.tone === 'good').length, off = sts.filter(s => s.tone === 'bad').length;
   const dels = db.deliverables.filter(d => d.owner_position_id === me.id && d.month === curMonth() && d.status !== 'removed'); const r = personResult(db, me, p);
   const sc = db.scorecards.find(s => s.position_id === me.id && s.quarter === p.n && s.status === 'Proposed');
   const steps = cycleSteps(db, me, role, t); const open = steps.filter(s => s.done === false);
   const h = new Date().getHours(); const hello = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   return <div className="light">
-    <div className="lhead"><div><h1>{hello}, {(me.holder_name || '').split(' ')[0]}</h1><p>{weekLabel(ws)} · {me.title} · {byId(db.org_units, me.org_unit_id)?.name}<HowItWorks><h3>What this page is for</h3><p>Your starting point each day: this week's plan and its status, your organisation's key results, this month's deliverables, and a checklist of the planning steps due now (targets, deliverables, week plan, updates before the cut-off). Click any card to go to the page where you act on it.</p></HowItWorks></p></div></div>
+    <div className="lhead"><div><h1>{hello}{me.holder_name ? ', ' + me.holder_name.split(' ')[0] : ''}</h1><p>{weekLabel(ws)} · {me.title} · {byId(db.org_units, me.org_unit_id)?.name}<HowItWorks><h3>What this page is for</h3><p>Your starting point each day: this week's plan and its status, your organisation's key results, this month's deliverables, and a checklist of the planning steps due now (targets, deliverables, week plan, updates before the cut-off). Click any card to go to the page where you act on it.</p></HowItWorks></p></div></div>
+    {(() => { const { can } = ctx; const waiting = db.plan_status.filter(s => (s.status === 'Endorsed' && can('finalApprove')) || (s.status === 'Submitted' && can('approve')));
+      return waiting.length > 0 && <section className="lsec"><h3>Plans waiting for your approval · {waiting.length}</h3>{waiting.map(s => <div key={s.unit_id + s.plan_kind + (s.period || '')}><div className="mini" style={{ margin: '6px 0 2px' }}>{byId(db.org_units, s.unit_id)?.name}</div><StatusBar unit={s.unit_id} kind={s.plan_kind} period={s.period || ''} label={s.plan_kind === 'okr' ? 'OKR plan 2026/27' : s.plan_kind === 'annual' ? 'Annual plan 2026/27' : s.plan_kind} /></div>)}</section>; })()}
+    {(() => { const { can } = ctx; const waiting = db.plan_status.filter(s => (s.status === 'Endorsed' && can('finalApprove')) || (s.status === 'Submitted' && can('approve')));
+      return waiting.length > 0 && <section className="lsec"><h3>Plans waiting for your approval · {waiting.length}</h3>{waiting.map(s => <div key={s.unit_id + s.plan_kind + (s.period || '')}><div className="mini" style={{ margin: '6px 0 2px' }}>{byId(db.org_units, s.unit_id)?.name}</div><StatusBar unit={s.unit_id} kind={s.plan_kind} period={s.period || ''} label={s.plan_kind === 'okr' ? 'OKR plan 2026/27' : s.plan_kind === 'annual' ? 'Annual plan 2026/27' : s.plan_kind} /></div>)}</section>; })()}
     {sc && <Link to="/me" className="lbanner">Your Q{p.n} scorecard is ready — review and agree →</Link>}
     <div className="tiles3">
       <Link to="/record?tab=week" className="ltile"><small>This week</small><b>{acts.length ? `${st.done} of ${acts.length} done` : 'Not planned yet'}</b><Bar p={st.completion} /><span>{acts.length ? 'Update my week →' : 'Plan my week →'}</span></Link>
-      <Link to="/strategy" className="ltile"><small>{byId(db.org_units, me.org_unit_id)?.name} · {t('key_result', true).toLowerCase()}</small><b>{deptKrs.length ? `${onT} on track · ${off} off track` : `Works to the level above`}</b><span>How we are doing →</span></Link>
+      <Link to="/strategy" className="ltile"><small>{role !== 'employee' && scopeOrgs.size > 1 ? `${byId(db.org_units, me.org_unit_id)?.name} and below` : byId(db.org_units, me.org_unit_id)?.name} · {t('key_result', true).toLowerCase()}</small><b>{deptKrs.length ? (onT + off ? `${onT} on track · ${off} off track` : `${deptKrs.length} ${t('key_result', true).toLowerCase()} · no update yet`) : `No ${t('key_result', true).toLowerCase()} of its own`}</b><span>How we are doing →</span></Link>
       <Link to="/plan?tab=deliverables" className="ltile"><small>{MONTHS[curMonth() - 1]} {t('deliverable', true).toLowerCase()}</small><b>{dels.length ? `${dels.filter(d => d.status === 'accepted').length} of ${dels.length} accepted` : 'None this month'}</b><span>Open →</span></Link>
     </div>
     <section className="lsec"><h3>My checklist · {open.length ? `${open.length} to do` : 'all done'}</h3><div className="lcard checklist">

@@ -5,6 +5,7 @@ import { krsOf, childObjectives, sum, fmt, pct, linesOf, MONTHS, AGG_NAME, DIR_N
 import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter } from '../lib/ui';
 import { Link } from 'react-router-dom';
 import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer } from './Goals';
+import { GoalModal } from './studio/Studio';
 
 export function orgOptions(db: DB, unit: string) {
   const out: { id: string; label: string; kind: string }[] = [];
@@ -190,7 +191,7 @@ function HeadView({ myOrg, p, extra, onKr, onNew }: { myOrg: string; p: Period; 
 export default function OkrPlan() {
   const { db, unit, me } = useData(); const save = useSave();
   const isDeptHead = !!me && ['department', 'division'].includes(me.level) && me.role !== 'employee';
-  const [p, setP] = usePeriod(); const [org, setOrg] = useState(() => isDeptHead ? me!.org_unit_id : ''); const [simple, setSimple] = useState<'mine' | 'all'>(isDeptHead ? 'mine' : 'all'); const [om, setOm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
+  const [p, setP] = usePeriod(); const [org, setOrg] = useState(() => isDeptHead ? me!.org_unit_id : ''); const [simple, setSimple] = useState<'mine' | 'all'>(isDeptHead ? 'mine' : 'all'); const [om, setOm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
   const headMode = isDeptHead && simple === 'mine' && me!.unit_id === unit; const parentOrg = me ? byId(db.org_units, me.org_unit_id)?.parent_id : null;
@@ -220,13 +221,15 @@ export default function OkrPlan() {
     <Cmd right={<>{isDeptHead && <Seg value={simple} options={[['mine', 'Above me and mine'], ['all', 'Whole unit']]} onChange={setSimple} />}{!headMode && <OrgFilter value={org} onChange={setOrg} />}<PeriodPicker value={p} onChange={setP} />{!headMode && <Link className="btn" to="/goals/new">Guided new objective</Link>}<button className="btn pri" onClick={() => headMode ? newUnder(null) : setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
     <StatusBar unit={unit} kind="okr" label="OKR plan 2026/27" />
     {issues.length > 0 && <div className="banner warn">{issues.length} objective{issues.length > 1 ? 's have' : ' has'} weights that do not add up to 100%.</div>}
-    {!headMode && !tree.length && <Empty>No strategic goals for this unit yet. Group Strategy loads them from the unit strategy.</Empty>}
+    {!headMode && !tree.length && <Empty>No strategic goals for this unit yet. Add the Group goals this unit serves — each objective then delivers one of them. <button className="btn sm pri" onClick={() => setGm({})}>+ Strategic goal</button></Empty>}
+    {!headMode && tree.length > 0 && <div className="row" style={{ justifyContent: 'flex-end', margin: '-4px 0 6px' }}><button className="btn sm" onClick={() => setGm({})} data-tip="Add another Group goal this unit serves (choose the pillar and the Group goal).">+ Strategic goal</button></div>}
     {headMode && <HeadView myOrg={me!.org_unit_id} p={p} extra={extra} onKr={id => setKm(byId(db.key_results, id)!)} onNew={newUnder} />}
     {!headMode && org && <section className="pil"><div className="pilh">Objectives of {byId(db.org_units, org)?.name} and below</div>{db.objectives.filter(o => subtreeIds(db, org).has(o.org_unit_id) && o.status !== 'Archived' && o.level !== 'individual').map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} depth={1} />)}</section>}
     {!headMode && !org && tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
       {goals.map(g => <div className="goal" key={g.id}><div className="goalh">{g.code} {g.name}<button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: g.id })}>+ Objective</button></div>
         {topObjectives(db, g.id).map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>)}</section>)}
     {!headMode && !org && loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
+    {gm && <GoalModal init={gm} unit={unit} group={false} onClose={() => setGm(null)} />}
     {om && <ObjModal unit={unit} init={om} onClose={() => setOm(null)} parentOrg={headMode ? parentOrg : null} />}
     {km && <KrModal unit={unit} init={km} onClose={() => setKm(null)} />}
     {kr && <KrDrawer id={kr} onClose={() => setKr(null)} />}
