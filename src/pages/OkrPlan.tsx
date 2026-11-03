@@ -4,7 +4,7 @@ import { sb } from '../lib/supabase';
 import { krsOf, childObjectives, sum, fmt, pct, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds, ownShare, objScore, liveObj, type Period } from '../lib/calc';
 import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter } from '../lib/ui';
 import { Link } from 'react-router-dom';
-import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer } from './Goals';
+import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer, ensureUnitGoal, isFunctionUnit, groupGoalsOf } from './Goals';
 import { GoalModal } from './studio/Studio';
 
 export function orgOptions(db: DB, unit: string) {
@@ -36,12 +36,16 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
   const set = (k: string, v: any) => setF(x => ({ ...x, [k]: v }));
   const goals = db.unit_goals.filter(g => g.unit_id === unit);
   const goal = byId(db.unit_goals, f.unit_goal_id); const pillar = goal && byId(db.unit_pillars, goal.pillar_id);
+  // corporate functions link straight to the Group goals (the unit's mirror of the goal is found or made on save)
+  const fn = isFunctionUnit(db, unit); const ggSel = f.gg || (goal?.group_goal_id ? 'gg:' + goal.group_goal_id : '');
+  const gGoal = fn && ggSel ? byId(db.group_goals, ggSel.slice(3)) : null; const gPil = gGoal && byId(db.group_pillars, gGoal.pillar_id);
   // a department or division head links to the objectives of the organisation directly above them
   const objs = db.objectives.filter(o => o.unit_id === unit && o.id !== f.id && liveObj(o) && o.level !== 'individual' && (!parentOrg || o.org_unit_id === parentOrg || o.id === init.parent_objective_id));
   const krs = db.key_results.filter(k => objs.some(o => o.id === k.objective_id));
   const orgs = orgOptions(db, unit);
   const people = db.positions.filter(p => p.org_unit_id === f.org_unit_id || (p.unit_id === unit && p.level !== 'employee'));
   async function go() {
+    if (fn && f.link === 'goal' && f.gg) { const id = await ensureUnitGoal(db!, unit, f.gg.slice(3)); if (!id) return; f.unit_goal_id = id; }
     const org = byId(db!.org_units, f.org_unit_id);
     const row: Row = { unit_id: unit, org_unit_id: f.org_unit_id, level: kindToLevel(org?.kind || 'unit'), text: f.text.trim(), owner_position_id: f.owner_position_id || null,
       unit_goal_id: f.link === 'goal' ? f.unit_goal_id || null : null, parent_objective_id: f.link === 'obj' ? f.parent_objective_id || null : null, parent_kr_id: f.link === 'kr' ? f.parent_kr_id || null : null,
@@ -52,7 +56,10 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
   return <Modal title={f.id ? 'Edit objective' : 'New objective'} onClose={onClose}>
     <label className="f">This objective delivers
       <select value={f.link} onChange={e => set('link', e.target.value)}><option value="goal">A strategic goal (unit objective)</option><option value="obj">An objective above</option><option value="kr">A key result above</option></select></label>
-    {f.link === 'goal' && <label className="f">Strategic goal
+    {f.link === 'goal' && fn && <label className="f">Group strategic goal <span className="note">(corporate functions link straight to the Group strategy)</span>
+      <select value={ggSel} onChange={e => set('gg', e.target.value)}><option value="">Choose…</option>{db.group_pillars.slice().sort((a, b) => a.sort - b.sort).map(gp => <optgroup key={gp.id} label={`${gp.code} · ${gp.name}`}>{groupGoalsOf(db, gp.id).map(g => <option key={g.id} value={'gg:' + g.id}>{g.code} {g.name}</option>)}</optgroup>)}</select>
+      {gPil && <span className="note">Group pillar: <b>{gPil.code} {gPil.name}</b></span>}</label>}
+    {f.link === 'goal' && !fn && <label className="f">Strategic goal
       <select value={f.unit_goal_id || ''} onChange={e => set('unit_goal_id', e.target.value)}><option value="">Choose…</option>{goals.map(g => <option key={g.id} value={g.id}>{g.code} {g.name}</option>)}</select>
       {pillar && <span className="note">Pillar: <b>{pillar.code} {pillar.name}</b> (set by the goal)</span>}</label>}
     {f.link === 'obj' && <label className="f">Objective above<select value={f.parent_objective_id || ''} onChange={e => set('parent_objective_id', e.target.value)}><option value="">Choose…</option>{objs.map(o => <option key={o.id} value={o.id}>{o.text.slice(0, 90)}</option>)}</select></label>}
@@ -62,7 +69,7 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label></div>
     <div className="g2">{f.link !== 'goal' && <label className="f" data-tip="Its share in the objective above. The objectives under one parent add up to 100% — at every level (unit → departments, department → divisions).">Weight in what it delivers (%)<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} /></label>}
       <label className="f" data-tip="When this objective has its own key results AND objectives below it, its score = own share × its key results + the rest × the objectives below. Set it for this objective; empty uses the level default from Studio → Configuration.">Share from its own key results (%)<NumIn value={f.own_weight} onChange={v => set('own_weight', v)} /><span className="mini">Objectives below get {100 - (f.own_weight ?? ownShare(db, { level: kindToLevel(byId(db.org_units, f.org_unit_id)?.kind || 'unit') }))}%{f.own_weight == null ? ' (level default)' : ''}</span></label></div>
-    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.text?.trim() || (f.link === 'goal' && !f.unit_goal_id)} onClick={go}>Save</button></div>
+    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.text?.trim() || (f.link === 'goal' && !(fn ? ggSel : f.unit_goal_id))} onClick={go}>Save</button></div>
   </Modal>;
 }
 
@@ -221,8 +228,9 @@ export default function OkrPlan() {
     <Cmd right={<>{isDeptHead && <Seg value={simple} options={[['mine', 'Above me and mine'], ['all', 'Whole unit']]} onChange={setSimple} />}{!headMode && <OrgFilter value={org} onChange={setOrg} />}<PeriodPicker value={p} onChange={setP} />{!headMode && <Link className="btn" to="/goals/new">Guided new objective</Link>}<button className="btn pri" onClick={() => headMode ? newUnder(null) : setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
     <StatusBar unit={unit} kind="okr" label="OKR plan 2026/27" />
     {issues.length > 0 && <div className="banner warn">{issues.length} objective{issues.length > 1 ? 's have' : ' has'} weights that do not add up to 100%.</div>}
-    {!headMode && !tree.length && <Empty>No strategic goals for this unit yet. Add the Group goals this unit serves — each objective then delivers one of them. <button className="btn sm pri" onClick={() => setGm({})}>+ Strategic goal</button></Empty>}
-    {!headMode && tree.length > 0 && <div className="row" style={{ justifyContent: 'flex-end', margin: '-4px 0 6px' }}><button className="btn sm" onClick={() => setGm({})} data-tip="Add another Group goal this unit serves (choose the pillar and the Group goal).">+ Strategic goal</button></div>}
+    {!headMode && !tree.length && isFunctionUnit(db, unit) && <Empty>{byId(db.org_units, unit)?.name} is a corporate function: its objectives link straight to the Group goals. Use <b>+ Objective</b> and pick the Group goal it delivers.</Empty>}
+    {!headMode && !tree.length && !isFunctionUnit(db, unit) && <Empty>No strategic goals for this unit yet. Add the Group goals this unit serves — each objective then delivers one of them. <button className="btn sm pri" onClick={() => setGm({})}>+ Strategic goal</button></Empty>}
+     {!headMode && tree.length > 0 && !isFunctionUnit(db, unit) && <div className="row" style={{ justifyContent: 'flex-end', margin: '-4px 0 6px' }}><button className="btn sm" onClick={() => setGm({})} data-tip="Add another Group goal this unit serves (choose the pillar and the Group goal).">+ Strategic goal</button></div>}
     {headMode && <HeadView myOrg={me!.org_unit_id} p={p} extra={extra} onKr={id => setKm(byId(db.key_results, id)!)} onNew={newUnder} />}
     {!headMode && org && <section className="pil"><div className="pilh">Objectives of {byId(db.org_units, org)?.name} and below</div>{db.objectives.filter(o => subtreeIds(db, org).has(o.org_unit_id) && o.status !== 'Archived' && o.level !== 'individual').map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} depth={1} />)}</section>}
     {!headMode && !org && tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>

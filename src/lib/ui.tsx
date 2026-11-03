@@ -37,7 +37,7 @@ export function UnitPicker({ allowAll }: { allowAll?: boolean } = {}) {
   if (!can('seeGroup')) return null;
   const v = allowAll && allUnits ? '__all' : unit || '';
   return <label className="scope"><span>{allowAll ? 'Viewing' : 'Unit'}</span><select value={v} onChange={e => { if (e.target.value === '__all') setAllUnits(true); else { setUnit(e.target.value); if (allowAll) setAllUnits(false); } }} aria-label="Unit">
-    {allowAll && <option value="__all">All units — Group view</option>}{allowAll && <option disabled>──────────</option>}{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>;
+    {allowAll && <option value="__all">All units — Group view</option>}{allowAll && <option disabled>──────────</option>}{[['business', 'Business units'], ['function', 'Corporate functions']].map(([k, l]) => { const us = units.filter(u => (u.unit_type === 'business' ? 'business' : 'function') === k); return us.length ? <optgroup key={k} label={l}>{us.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</optgroup> : null; })}</select></label>;
 }
 
 export function Cmd({ children, right }: { children?: ReactNode; right?: ReactNode }) { return <div className="cmdbar"><UnitPicker />{children}<span className="sp" />{right}</div>; }

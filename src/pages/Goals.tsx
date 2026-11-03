@@ -4,7 +4,7 @@ import { Targets } from './work/Plan';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, weighted, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter } from '../lib/ui';
+import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter, NumIn } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
 const LVL: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
@@ -19,6 +19,43 @@ export const unlinked = (db: DB, unit: string) => db.objectives.filter(o => o.un
 export function goalScore(db: DB, goalId: string, p: Period) { return avg(topObjectives(db, goalId).map(o => objScore(db, o, p))); }
 /** Pillar score: its goals' scores, weighted by each goal's weight in the pillar (equal when no weights are set). */
 export function pillarScore(db: DB, pillarId: string, p: Period) { const gs = db.unit_goals.filter(g => g.pillar_id === pillarId); return weighted(gs.map(g => [Number(g.weight) || (gs.some(x => Number(x.weight)) ? 0 : 1), goalScore(db, g.id, p)])); }
+
+/** Shares that always add up to 100: weights that are set count as given, the rest split what is left equally; then normalised. */
+export function shares<T>(items: T[], w: (x: T) => any): Map<T, number> {
+  const has = (x: T) => w(x) != null && w(x) !== '' && !isNaN(Number(w(x)));
+  const setSum = items.filter(has).reduce((a, x) => a + Number(w(x)), 0); const rest = items.filter(x => !has(x)).length;
+  const each = rest ? Math.max(0, 100 - setSum) / rest : 0; const raw = items.map(x => has(x) ? Number(w(x)) : each); const tot = raw.reduce((a, b) => a + b, 0);
+  return new Map(items.map((x, i) => [x, tot ? raw[i] * 100 / tot : 100 / items.length]));
+}
+export const groupGoalsOf = (db: DB, pillarId: string) => db.group_goals.filter(g => g.pillar_id === pillarId).sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+/** Each Group pillar's share of the Group strategy. */
+export const pillarShares = (db: DB) => shares(db.group_pillars.slice().sort((a, b) => a.sort - b.sort), p => p.weight);
+/** Each Group goal's share of its pillar. */
+export const goalShares = (db: DB, pillarId: string) => shares(groupGoalsOf(db, pillarId), g => g.weight);
+/** Each unit goal's contribution to the Group goal it serves. Shares are per unit (equal by default); a unit with several goals on one Group goal splits its share among them. */
+export function contribShares(db: DB, groupGoalId: string) {
+  const ugs = db.unit_goals.filter(u => u.group_goal_id === groupGoalId); const units = Array.from(new Set(ugs.map(u => u.unit_id)));
+  const uw = (uid: string) => { const m = ugs.filter(u => u.unit_id === uid); return m.some(u => u.contribution != null) ? m.reduce((a, u) => a + (Number(u.contribution) || 0), 0) : null; };
+  const us = shares(units, uw); const out = new Map<Row, number>();
+  ugs.forEach(u => { const m = ugs.filter(x => x.unit_id === u.unit_id); out.set(u, (us.get(u.unit_id) || 0) / m.length); }); return out;
+}
+/** Each unit's share of the whole Group strategy: pillar share × goal share × contribution, summed. Adds up to 100 over the goals that are served. */
+export function unitStrategyShares(db: DB) {
+  const out = new Map<string, number>(); let served = 0; const ps = pillarShares(db);
+  db.group_pillars.forEach(pil => { const gs = goalShares(db, pil.id); groupGoalsOf(db, pil.id).forEach(g => { const cs = contribShares(db, g.id); const base = (ps.get(pil) || 0) * (gs.get(g) || 0) / 100;
+    if (cs.size) served += base; cs.forEach((c, u) => out.set(u.unit_id, (out.get(u.unit_id) || 0) + base * c / 100)); }); });
+  return { byUnit: out, served };
+}
+/** Corporate functions plan against the Group strategy: picking a Group goal finds (or creates) the unit's mirror of it. */
+export async function ensureUnitGoal(db: DB, unit: string, groupGoalId: string): Promise<string | null> {
+  const have = db.unit_goals.find(u => u.unit_id === unit && u.group_goal_id === groupGoalId); if (have) return have.id;
+  const gg = byId(db.group_goals, groupGoalId); const gp = gg && byId(db.group_pillars, gg.pillar_id); if (!gg || !gp) return null;
+  let pil = db.unit_pillars.find(x => x.unit_id === unit && x.code === gp.code);
+  if (!pil) { const id = crypto.randomUUID(); const { error } = await sb.from('unit_pillars').insert({ id, unit_id: unit, code: gp.code, name: gp.name, description: 'Group pillar', sort: gp.sort }); if (error) return null; pil = { id }; }
+  const id = crypto.randomUUID(); const { error } = await sb.from('unit_goals').insert({ id, unit_id: unit, pillar_id: pil.id, code: gg.code, name: gg.name, group_goal_id: gg.id, link_confirmed: true, sort: gg.sort || 0 });
+  return error ? null : id;
+}
+export const isFunctionUnit = (db: DB, unit: string) => byId(db.org_units, unit)?.unit_type === 'function';
 export function statusCounts(db: DB, krs: Row[], p: Period) {
   const c: Record<string, number> = { 'On track': 0, Behind: 0, 'Off track': 0, 'No update': 0, other: 0 };
   krs.forEach(k => { const s = krState(db, k, p).label; if (s in c) c[s]++; else c.other++; });
@@ -234,19 +271,56 @@ export function GoalsQuarter() {
 }
 
 export function GroupView() {
-  const { db, setUnit } = useData(); const [p, setP] = usePeriod(); if (!db) return null;
+  const { db, setUnit, can } = useData(); const save = useSave(); const [p, setP] = usePeriod(); if (!db) return null;
+  const edit = can('approve');
   const pillars = db.group_pillars.slice().sort((a, b) => a.sort - b.sort); const st = db.strategy_statements.find(s => s.unit_id === db.org_units.find(x => x.kind === 'group')?.id);
-  const gScore = (g: Row) => avg(db.unit_goals.filter(u => u.group_goal_id === g.id).map(u => goalScore(db, u.id, p)));
-  return <Page title="Group view" desc="Group pillars and goals, the unit goals that serve them, and how they are doing." help={<p>For each Group goal: the unit goals linked to it and their scores for the period. A Group goal no unit serves is flagged so Group Strategy can assign it or pause it. Links marked "to confirm" were proposed from the strategy documents.</p>}>
-    <div className="cmdbar"><span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
+  const ps = pillarShares(db);
+  const gScore = (g: Row) => { const cs = contribShares(db, g.id); return weighted(Array.from(cs.entries()).map(([u, w]) => [w, goalScore(db, u.id, p)])); };
+  const pScore = (pil: Row) => { const gs = goalShares(db, pil.id); return weighted(groupGoalsOf(db, pil.id).filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).map(g => [gs.get(g) || 0, gScore(g)])); };
+  const put = (table: string, id: string, field: string, v: number | null) => save(() => sb.from(table).update({ [field]: v }).eq('id', id), [table], 'Weight saved');
+  const sumSet = (rows: Row[], f: string) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
+  const Total = ({ rows, f, what }: { rows: Row[]; f: string; what: string }) => { const set = rows.filter(r => r[f] != null); const t = sumSet(rows, f);
+    return !set.length ? <span className="mini">{what}: equal shares (none set)</span> : <span className="mini">{what}: entered {fmt(t, 2)}%{set.length < rows.length ? ` · ${rows.length - set.length} not set share the rest` : ''} {set.length === rows.length && Math.round(t) !== 100 ? <Pill tone="warn">not 100% — shares are scaled</Pill> : Math.round(t) === 100 ? <Pill tone="good">100%</Pill> : null}</span>; };
+  const { byUnit, served } = unitStrategyShares(db);
+  const units = db.org_units.filter(u => u.kind === 'unit' && u.active !== false);
+  const cat = (u: Row) => u.unit_type === 'business' ? 'Business units' : 'Corporate functions';
+  return <Page title="Group view" desc="Group pillars and goals, the units that serve them, how much each contributes, and how they are doing." help={<>
+    <p><b>Weights.</b> Each pillar has a share of the Group strategy; the goals in a pillar share it (they add up to 100%); and the units serving a Group goal share that goal (they add up to 100%). A weight left empty takes an equal share of what the set weights leave. Scores roll up with these weights.</p>
+    <p><b>Contribution to the Group strategy</b> = pillar share × goal share × the unit's share of the goal, added over every goal the unit serves. It adds up to 100% over the goals that are served.</p>
+    <p><b>Categories.</b> Business units plan their own pillars and goals, each linked to a Group goal. Corporate functions link their objectives straight to the Group goals.</p>
+    <p>Links marked "to confirm" were proposed from the strategy documents. A Group goal no unit serves is flagged.</p></>}>
+    <div className="cmdbar">{edit && <span className="note">You can edit the weights: type a number and leave the box.</span>}<span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
     {st && <div className="ident" style={{ marginBottom: 14 }}><div className="card"><h4>Group vision</h4><div className="big">{st.vision}</div></div><div className="card"><h4>Group mission</h4><div>{st.mission}</div></div></div>}
-    <div className="pilgrid" style={{ marginBottom: 16 }}>{pillars.map(pil => { const gs = db.group_goals.filter(g => g.pillar_id === pil.id); return <div key={pil.id} className="pilcard"><div className="ph"><Ring p={avg(gs.map(gScore))} size={42} /><b>{pil.code} · {pil.name}</b></div>{pil.description && <div className="note">{pil.description}</div>}<div className="mini">{gs.length} goals · {gs.filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).length} served by a unit</div></div>; })}</div>
-    {pillars.map(pil => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
-      <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Group goal</th><th>Served by</th><th>{periodLabel(p)}</th></tr></thead><tbody>
-        {db.group_goals.filter(g => g.pillar_id === pil.id).sort((a, b) => a.sort - b.sort).map(g => { const ugs = db.unit_goals.filter(u => u.group_goal_id === g.id);
-          return <tr key={g.id}><td>{g.code} {g.name}</td><td>{ugs.length ? ugs.map(u => <div key={u.id} className="row"><Link to="/insights/map" onClick={() => setUnit(u.unit_id)}>{byId(db.org_units, u.unit_id)?.name}</Link><span>{u.name}</span>{!u.link_confirmed && <Pill tone="warn">to confirm</Pill>}<span className="note">{pct(goalScore(db, u.id, p))}</span></div>) : <Pill tone="bad">No unit serving it</Pill>}</td>
+    <div className="pilgrid" style={{ marginBottom: 6 }}>{pillars.map(pil => { const gs = groupGoalsOf(db, pil.id); return <div key={pil.id} className="pilcard"><div className="ph"><Ring p={pScore(pil)} size={42} /><b>{pil.code} · {pil.name}</b></div>
+      <div className="row"><span className="mini" style={{ flex: 1 }}>{gs.length} goals · {gs.filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).length} served</span><span className="mini">share of the strategy</span>{edit ? <NumIn w={64} value={pil.weight} onChange={v => put('group_pillars', pil.id, 'weight', v)} /> : null}<b>{fmt(ps.get(pil) || 0, 1)}%</b></div></div>; })}</div>
+    <p style={{ marginBottom: 14 }}><Total rows={pillars} f="weight" what="Pillar weights" /></p>
+    {pillars.map(pil => { const gs = groupGoalsOf(db, pil.id); const gsh = goalShares(db, pil.id); return <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name} · {fmt(ps.get(pil) || 0, 1)}% of the Group strategy</div>
+      <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Group goal</th><th className="n">Share of pillar</th><th>Served by · share of the goal</th><th>{periodLabel(p)}</th></tr></thead><tbody>
+        {gs.map(g => { const ugs = db.unit_goals.filter(u => u.group_goal_id === g.id); const cs = contribShares(db, g.id);
+          return <tr key={g.id}><td style={{ width: '28%' }}>{g.code} {g.name}</td>
+            <td className="n" style={{ whiteSpace: 'nowrap' }}>{edit && <NumIn w={58} value={g.weight} onChange={v => put('group_goals', g.id, 'weight', v)} />} <b>{fmt(gsh.get(g) || 0, 1)}%</b></td>
+            <td>{ugs.length ? <>{Array.from(new Set(ugs.map(u => u.unit_id))).map(uid => { const mine = ugs.filter(u => u.unit_id === uid); const sh = mine.reduce((a, u) => a + (cs.get(u) || 0), 0);
+              const val = mine.every(u => u.contribution != null) ? mine.reduce((a, u) => a + Number(u.contribution), 0) : null;
+              const setV = (v: number | null) => save(async () => { for (const u of mine) { const r = await sb.from('unit_goals').update({ contribution: v == null ? null : v / mine.length }).eq('id', u.id); if (r.error) return r; } return { error: null }; }, ['unit_goals'], 'Contribution saved');
+              return <div key={uid} className="contrib">
+              <span className="cw">{edit && <NumIn w={54} value={val == null ? null : Math.round(val * 100) / 100} onChange={setV} />}<b>{fmt(sh, 1)}%</b></span>
+              <span className="cbar"><i style={{ width: sh + '%' }} /></span>
+              <span className="cname"><Link to="/insights/map" onClick={() => setUnit(uid)}>{byId(db.org_units, uid)?.name}</Link>
+                {mine.map(u => <div key={u.id} className="mini">{u.name}{!u.link_confirmed && <> <Pill tone="warn">to confirm</Pill></>} · {pct(goalScore(db, u.id, p))}</div>)}</span></div>; })}
+              {new Set(ugs.map(u => u.unit_id)).size > 1 && <Total rows={Array.from(new Set(ugs.map(u => u.unit_id))).map(uid => { const m = ugs.filter(u => u.unit_id === uid); return { contribution: m.some(u => u.contribution != null) ? m.reduce((a, u) => a + (Number(u.contribution) || 0), 0) : null }; })} f="contribution" what="Unit shares" />}</> : <Pill tone="bad">No unit serving it</Pill>}</td>
             <td><Bar p={gScore(g)} /></td></tr>; })}
-      </tbody></table></div></section>)}
+      </tbody></table></div><p style={{ margin: '4px 0 0' }}><Total rows={gs} f="weight" what="Goal weights in this pillar" /></p></section>; })}
+    <section className="pil"><div className="pilh">Contribution of each unit to the Group strategy</div>
+      <p className="note" style={{ margin: '8px 0' }}>Pillar share × goal share × unit share of the goal, added over the goals each unit serves. {served < 99.5 ? `Goals no unit serves hold ${fmt(100 - served, 1)}% of the strategy; the shares below are of the ${fmt(served, 1)}% that is served, scaled to 100%.` : ''}</p>
+      <div className="tw"><table className="t"><thead><tr><th>Unit</th><th>Category</th><th className="n">Group goals served</th><th className="n">Contribution</th><th style={{ width: '30%' }} /></tr></thead><tbody>
+        {['Business units', 'Corporate functions'].map(c => { const rows = units.filter(u => cat(u) === c).map(u => ({ u, v: served ? (byUnit.get(u.id) || 0) * 100 / served : 0, n: new Set(db.unit_goals.filter(g => g.unit_id === u.id && g.group_goal_id).map(g => g.group_goal_id)).size })).sort((a, b) => b.v - a.v);
+          const tot = rows.reduce((a, r) => a + r.v, 0);
+          return [<tr key={c} className="g"><td colSpan={3}><b>{c}</b></td><td className="n"><b>{fmt(tot, 1)}%</b></td><td /></tr>,
+            ...rows.map(({ u, v, n }) => <tr key={u.id}><td className="ind"><Link to="/insights/map" onClick={() => setUnit(u.id)}>{u.name}</Link></td>
+              <td>{edit ? <select value={u.unit_type || 'function'} onChange={e => save(() => sb.from('org_units').update({ unit_type: e.target.value }).eq('id', u.id), ['org_units'], 'Category saved')}><option value="business">Business unit</option><option value="function">Corporate function</option></select> : u.unit_type === 'business' ? 'Business unit' : 'Corporate function'}</td>
+              <td className="n">{n || '—'}</td><td className="n">{v ? fmt(v, 1) + '%' : '—'}</td><td><span className="cbar"><i style={{ width: v + '%' }} /></span></td></tr>)]; })}
+        <tr className="g"><td colSpan={3}><b>Total</b></td><td className="n"><b>{served ? '100%' : '—'}</b></td><td /></tr>
+      </tbody></table></div></section>
     <p className="note">Months {MONTHS.join(' · ')} start on the Ethiopian month. Period months: {periodMonths(p).map(x => MONTHS[x - 1]).join(', ')}.</p>
   </Page>;
 }

@@ -357,3 +357,9 @@ tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-lef
 .hba{position:absolute;left:0;top:6px;height:10px;background:var(--accent);border-radius:3px}.hba.neg{background:var(--bad)}
 .hbv{font-size:13px;text-align:right;white-space:nowrap}
 @media (max-width:640px){.hb{grid-template-columns:1fr;gap:2px}.hbv{text-align:left}}
+
+.contrib{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}.contrib:last-of-type{border-bottom:0}
+.contrib .cw{display:inline-flex;align-items:center;gap:4px;min-width:66px;justify-content:flex-end;white-space:nowrap}
+.cbar{display:inline-block;width:90px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;vertical-align:middle}.cbar i{display:block;height:100%;background:var(--accent,#c9a227);border-radius:3px}
+td>.cbar{width:100%}
+.contrib{align-items:flex-start}.contrib .cbar{width:80px;flex:none;margin-top:7px}.contrib .cw{padding-top:1px}.contrib .cname{flex:1;min-width:0}
