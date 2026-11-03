@@ -62,6 +62,11 @@ export function Page({ title, desc, help, children, actions }: { title: string; 
     {open && <HelpFloat onClose={() => setOpen(false)}>{help}</HelpFloat>}
   </>;
 }
+/** "How this works" link for pages that have their own header (Work and Insights pages). */
+export function HowItWorks({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <> <button className="linkbtn" onClick={() => setOpen(true)}>How this works</button>{open && <HelpFloat onClose={() => setOpen(false)}>{children}</HelpFloat>}</>;
+}
 /** Department / division filter inside the selected unit. */
 export function OrgFilter({ value, onChange, label = 'Whole unit' }: { value: string; onChange: (v: string) => void; label?: string }) {
   const { db, unit } = useData(); if (!db || !unit) return null;

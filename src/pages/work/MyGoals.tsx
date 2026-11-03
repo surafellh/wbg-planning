@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useData, useSave, useTerms, byId, posName, notifyPositions, managerOf, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { krState, objScore, krsOf, currentPeriod, periodLabel, pct, fmt, curMonth, qOfMonth, MONTHS, type Period } from '../../lib/calc';
-import { Bar, Pill, Modal, NumIn, StatePill, Empty } from '../../lib/ui';
+import { HowItWorks, Bar, Pill, Modal, NumIn, StatePill, Empty } from '../../lib/ui';
 import { Thread } from '../../lib/social';
 
 const KIND: Record<string, { label: string; hint: string; aggregation: string; direction: string }> = {
@@ -65,7 +65,7 @@ export function MyGoals() {
   const parents = new Set(mine.map(o => o.parent_objective_id).filter(Boolean)); const myOrgObjs = db.objectives.filter(o => (o.org_unit_id === me.org_unit_id || parents.has(o.id)) && o.level !== 'individual' && o.owner_position_id !== me.id);
   const need = [...mine.flatMap(o => krsOf(db, o.id)), ...elsewhere].filter(k => k.measure === 'manual' && !db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString())).length;
   return <div className="light">
-    <div className="lhead"><div><h1>My {t('objective', true).toLowerCase()}</h1><p>{periodLabel(p)} · {mine.length} {t('objective', mine.length !== 1).toLowerCase()}{need ? ` · ${need} to update` : ''}</p></div><Link className="btn pri big" to="/goals/new">+ New {t('objective').toLowerCase()}</Link></div>
+    <div className="lhead"><div><h1>My {t('objective', true).toLowerCase()}</h1><p>{periodLabel(p)} · {mine.length} {t('objective', mine.length !== 1).toLowerCase()}{need ? ` · ${need} to update` : ''}<HowItWorks><h3>What this page is for</h3><p>Personal objectives you set with your manager, if your organisation uses them. Organisation objectives are planned in Studio → Objective planner; your day-to-day contribution is through deliverables and weekly activities.</p></HowItWorks></p></div><Link className="btn pri big" to="/goals/new">+ New {t('objective').toLowerCase()}</Link></div>
     {!mine.length && !elsewhere.length && <Empty>You have no {t('objective', true).toLowerCase()} yet. Start with "New {t('objective').toLowerCase()}" — it takes about two minutes.</Empty>}
     <div className="stack">{mine.map(o => <GoalCard key={o.id} o={o} p={p} mine />)}</div>
     {elsewhere.length > 0 && <><h3 className="lsub">{t('key_result', true)} you own in others' {t('objective', true).toLowerCase()}</h3>

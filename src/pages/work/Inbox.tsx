@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { useData, useSave, useTerms, byId, posName, notifyPositions, managerOf, canEnterActuals, moduleOn, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { krsOf, krState, currentPeriod, periodLabel, pct, fmt, qMonths, qOfMonth, curMonth, MONTHS, personResult, bandOf, weekStart, ymd, weekLabel, workStats, cutoffOf, cutoffLabel } from '../../lib/calc';
-import { Pill, Modal, Empty, Ring, Bar, NumIn, StatePill } from '../../lib/ui';
+import { HowItWorks, Pill, Modal, Empty, Ring, Bar, NumIn, StatePill } from '../../lib/ui';
 import { AcceptForm, teamOf, WeekReview, MyWeekCompact } from '../Work';
 import { PersonDrawer } from '../Performance';
 import { weeksOfMonth } from './Plan';
@@ -43,7 +43,7 @@ export function ScorecardEditor({ sc, onClose }: { sc: Row; onClose: () => void 
 export function InboxPage() {
   const { role, db, user } = useData(); const head = role !== 'employee'; const msgs = moduleOn(db, 'messages'); const tab = new URLSearchParams(location.search).get('tab') || 'decisions'; const [t2, setT2] = useState(tab);
   const unreadMsg = db ? db.messages.filter(m => m.to_user === user.id && !m.read_at).length : 0;
-  return <div className="light"><div className="lhead"><div><h1>Inbox</h1><p>{head ? 'Decisions waiting for you, and messages.' : 'What is waiting for you, and messages.'}</p></div></div>
+  return <div className="light"><div className="lhead"><div><h1>Inbox</h1><p>{head ? 'Decisions waiting for you, and messages.' : 'What is waiting for you, and messages.'}<HowItWorks><h3>What this page is for</h3><p>Everything that needs a reply from you. <b>Decisions</b> (leaders): deliverables to accept, plans and proposals to confirm, rescope and target-change requests, position claims, ERP OKRs to replan. <b>For me</b>: replies, returned items and mentions. <b>Messages</b>: conversations with colleagues. Notification types can be switched off in Studio → Configuration.</p></HowItWorks></p></div></div>
     <div className="tabs"><button className={t2 === 'decisions' ? 'on' : ''} onClick={() => setT2('decisions')}>{head ? 'Decisions' : 'For me'}</button>{msgs && <button className={t2 === 'messages' ? 'on' : ''} onClick={() => setT2('messages')}>Messages{unreadMsg ? ` (${unreadMsg})` : ''}</button>}</div>
     {t2 === 'decisions' ? (head ? <Inbox embedded /> : <ForMe />) : <Messages />}</div>;
 }
@@ -117,7 +117,7 @@ export function Me() {
   const p = currentPeriod('Q'); const r = personResult(db, me, p); const sc = db.scorecards.find(s => s.position_id === me.id && s.quarter === p.n); const items = sc ? db.scorecard_items.filter(i => i.scorecard_id === sc.id) : [];
   const months = Array.from({ length: curMonth() }, (_, i) => personResult(db, me, { t: 'M', n: i + 1 }).R);
   return <div className="light narrow">
-    <div className="lhead"><div><h1>My performance</h1><p>{periodLabel(p)} · measured against this quarter's targets</p></div></div>
+    <div className="lhead"><div><h1>My performance</h1><p>{periodLabel(p)} · measured against this quarter's targets<HowItWorks><h3>What this page is for</h3><p>Your result for the period you choose. <b>Result = organisation part × its weight + your personal part × the rest.</b> Leaders carry the score of the organisation they lead (unit, department or division); team members are measured on their own work only. The personal part comes from your agreed scorecard, otherwise from accepted deliverables, otherwise from the key results you own. Weights are set in Studio → Configuration → Scoring.</p></HowItWorks></p></div></div>
     <div className="lcard row" style={{ gap: 20 }}><Ring p={r.R} size={92} /><div className="stack" style={{ gap: 4 }}><b style={{ fontSize: 20 }}>{pct(r.R)} · {bandOf(r.R, db)}</b>
       <div className="note">{r.s ? <>{Math.round(r.s * 100)}% from {r.orgLabel} ({pct(r.org)}) + {Math.round((1 - r.s) * 100)}% from my own work ({pct(r.personal)})</> : <>From my own work ({pct(r.personal)})</>}</div><div className="mini">{r.basis}</div><button className="linkbtn" onClick={() => setDet(true)}>See the details</button></div></div>
     <section className="lsec"><h3>My Q{p.n} scorecard</h3>
@@ -185,7 +185,7 @@ export function Today() {
   const steps = cycleSteps(db, me, role, t); const open = steps.filter(s => s.done === false);
   const h = new Date().getHours(); const hello = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   return <div className="light">
-    <div className="lhead"><div><h1>{hello}, {(me.holder_name || '').split(' ')[0]}</h1><p>{weekLabel(ws)} · {me.title} · {byId(db.org_units, me.org_unit_id)?.name}</p></div></div>
+    <div className="lhead"><div><h1>{hello}, {(me.holder_name || '').split(' ')[0]}</h1><p>{weekLabel(ws)} · {me.title} · {byId(db.org_units, me.org_unit_id)?.name}<HowItWorks><h3>What this page is for</h3><p>Your starting point each day: this week's plan and its status, your organisation's key results, this month's deliverables, and a checklist of the planning steps due now (targets, deliverables, week plan, updates before the cut-off). Click any card to go to the page where you act on it.</p></HowItWorks></p></div></div>
     {sc && <Link to="/me" className="lbanner">Your Q{p.n} scorecard is ready — review and agree →</Link>}
     <div className="tiles3">
       <Link to="/record?tab=week" className="ltile"><small>This week</small><b>{acts.length ? `${st.done} of ${acts.length} done` : 'Not planned yet'}</b><Bar p={st.completion} /><span>{acts.length ? 'Update my week →' : 'Plan my week →'}</span></Link>

@@ -5,10 +5,10 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useData, useSave, useTerms, useWindows, byId, posName, notifyPositions, managerOf, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { krsOf, MONTHS, qMonths, qOfMonth, curMonth, monthStart, weekStart, ymd, weekLabel, FY, krTarget, AGG_NAME, liveObj, subtreeIds } from '../../lib/calc';
-import { Seg, Empty, Pill } from '../../lib/ui';
+import { HowItWorks, Seg, Empty, Pill } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf } from '../Work';
-import { planStatus } from '../OkrPlan';
+import { planStatus, KrModal } from '../OkrPlan';
 
 const LEADS = ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'];
 export const isHead = (role: string) => role !== 'employee';
@@ -51,38 +51,29 @@ export function SaveBar({ dirty, onSave, onDiscard, label = 'Unsaved changes', b
 
 /* ---------- Quarter targets (heads) ---------- */
 export function Targets({ unitId, orgId }: { unitId?: string; orgId?: string } = {}) {
-  const { db, me, role, can, user } = useData(); const W = useWindows(); const save = useSave(); const { t } = useTerms(); const [mode, setMode] = useState<'Q' | 'M'>('Q'); const [busy, setBusy] = useState(false);
+  const { db, me, role, can } = useData(); const W = useWindows(); const { t } = useTerms(); const [edit, setEdit] = useState<Row | null>(null); const [view, setView] = useState<'Q' | 'M'>('Q');
   const krs = useMemo(() => { if (!db || !me) return [];
     const editable = (x: { k: Row }) => x.k.measure === 'manual' || x.k.measure === 'deliverables';
     if (unitId) { const sub = orgId ? subtreeIds(db, orgId) : null; return db.objectives.filter(o => o.unit_id === unitId && o.level !== 'individual' && liveObj(o) && (!sub || sub.has(o.org_unit_id))).flatMap(o => krsOf(db, o.id).map(k => ({ k, o }))).filter(editable); }
     const mine = headedOrgs(db, me, role); return workKrs(db, me, true).filter(x => mine.has(x.o.org_unit_id) && editable(x)); }, [db, me, role, unitId, orgId]);
-  const source = useMemo(() => db ? krs.map(({ k, o }) => { const r: Row = { id: k.id, obj: o.text, title: k.title, uom: k.uom, how: AGG_NAME[k.aggregation || 'sum']?.split(' (')[0], year: k.year_target, mode: k.target_mode };
-    [1, 2, 3, 4].forEach(q => { r['q' + q] = db.kr_targets.find(x => x.kr_id === k.id && x.quarter === q)?.target ?? null; });
-    for (let m = 1; m <= 12; m++) r['m' + m] = db.kr_month_targets.find(x => x.kr_id === k.id && x.month === m)?.target ?? null;
-    return r; }) : [], [db, krs]);
-  const d = useDraft(source, [source]);
   if (!db || !me) return null;
   const tUnit = unitId || me.unit_id;
   const okrApproved = planStatus(db, tUnit, 'okr')?.status === 'Approved' && !can('approve') && db.settings.approvals?.target_changes !== false;
-  const rows: Row[] = []; let last = ''; d.rows.forEach(r => { if (r.obj !== last) { rows.push({ _header: r.obj }); last = r.obj; } rows.push(r); });
-  const map = rows.map(r => r._header ? -1 : d.rows.indexOf(r));
-  const cols: Col[] = [{ key: 'title', label: t('key_result'), type: 'ro', width: 320 }, { key: 'uom', label: 'Unit', type: 'ro', width: 70 }, { key: 'how', label: 'Combine', type: 'ro', width: 110, tip: 'How months add up to a quarter: adds up, average or latest value. Set in the objective planner.' },
-    { key: 'year', label: 'Year target', type: 'number', width: 100 }, ...(mode === 'Q' ? [1, 2, 3, 4].map(q => ({ key: 'q' + q, label: `Q${q}`, type: 'number' as const, width: 90 })) : Array.from({ length: 12 }, (_, i) => ({ key: 'm' + (i + 1), label: MONTHS[i], type: 'number' as const, width: 74 })))];
-  async function doSave() {
-    setBusy(true); const changes: Row[] = [];
-    for (const r of d.rows.filter(r => r._dirty)) { const s0 = source.find(x => x.id === r.id)!;
-      for (const key of ['year', ...[1, 2, 3, 4].map(q => 'q' + q), ...Array.from({ length: 12 }, (_, i) => 'm' + (i + 1))]) if (r[key] !== s0[key]) changes.push({ kr_id: r.id, key, old: s0[key], new: r[key], label: `${r.title} · ${key.toUpperCase()}` }); }
-    if (okrApproved) { // approved plan: changes become a rescope request
-      const ok = await save(() => sb.from('rescopes').insert({ unit_id: tUnit, kind: 'okr_targets', trigger: 'Target change', status: 'Submitted', changes, by_user: user.id, note: `${changes.length} target change(s) by ${me!.holder_name}` }), ['rescopes'], 'Sent to Group Strategy for approval');
-      if (ok) d.reset(); setBusy(false); return;
-    }
-    await applyTargetChanges(changes); await save(() => Promise.resolve({ error: null }) as any, ['key_results', 'kr_targets', 'kr_month_targets'], 'Targets saved'); setBusy(false);
-  }
+  const pending = new Set(db.rescopes.filter(r => r.kind === 'okr_targets' && r.status === 'Submitted').flatMap(r => (r.changes || []).map((c: Row) => c.kr_id)));
+  const cell = (k: Row, n: number) => { if (view === 'Q') { const v = k.target_mode === 'quarterly' ? db.kr_targets.find(x => x.kr_id === k.id && x.quarter === n)?.target : null; return v ?? krTarget(db, k, { t: 'Q', n }); } const v = k.target_mode === 'monthly' ? db.kr_month_targets.find(x => x.kr_id === k.id && x.month === n)?.target : null; return v ?? krTarget(db, k, { t: 'M', n }); };
+  const set = (k: Row) => k.target_mode === 'monthly' ? 'By month' : k.target_mode === 'annual' ? 'One annual target' : 'By quarter';
+  let last = '';
   return <div className="stack">
-    <div className="row"><p className="note" style={{ flex: 1 }}>Set the targets for the {t('key_result', true).toLowerCase()} {unitId ? 'of this unit (checked-in and deliverable-based ones)' : 'of the organisation you lead and the levels below it'}. {okrApproved ? 'The plan is approved, so changes go to Group Strategy as a change request.' : 'Enter by quarter or by month; the year target is for reference.'} Results measured from the annual plan take their targets from the revenue plan or budget.</p><Seg value={mode} options={[['Q', 'By quarter'], ['M', 'By month']]} onChange={setMode} />
-      {W.item('okr') && <Link className="btn sm" to="/studio/okr">Add or change {t('objective', true).toLowerCase()} →</Link>}</div>
-    {!krs.length ? <Empty>No {t('key_result', true).toLowerCase()} for your organisation yet.</Empty> : <Sheet cols={cols} rows={rows} onChange={(i, k, v) => { const j = map[i]; if (j >= 0) { d.change(j, k, v); d.change(j, 'mode', k.startsWith('m') && k !== 'mode' ? 'monthly' : k.startsWith('q') ? 'quarterly' : d.rows[j].mode); } }} />}
-    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} label={okrApproved ? 'Changes will be sent for approval' : 'Unsaved target changes'} />
+    <div className="row"><p className="note" style={{ flex: 1 }}>These are the <b>targets of the {t('key_result', true).toLowerCase()}</b> (not of deliverables) {unitId ? 'of this unit' : 'of the organisation you lead and the levels below it'}. Click <b>Set targets</b> to open the objective builder for that {t('key_result').toLowerCase()}: choose one annual target, quarterly or monthly targets, how the months combine (adds up, average, latest level) and whether higher or lower is better. {okrApproved ? 'The plan is approved, so target changes go to Group Strategy for approval.' : ''} Results measured from the annual plan take their targets from the revenue plan or budget.</p>
+      <Seg value={view} options={[['Q', 'Quarters'], ['M', 'Months']]} onChange={setView} />{W.item('okr') && <Link className="btn sm" to="/studio/okr">Add or change {t('objective', true).toLowerCase()} →</Link>}</div>
+    {!krs.length ? <Empty>No {t('key_result', true).toLowerCase()} with targets to set for your organisation yet.</Empty> : <div className="tw"><table className="t"><thead><tr><th className="first">{t('key_result')}</th><th>How it is measured</th><th className="n">Year</th>{(view === 'Q' ? [1, 2, 3, 4] : Array.from({ length: 12 }, (_, i) => i + 1)).map(n => <th key={n} className="n">{view === 'Q' ? 'Q' + n : MONTHS[n - 1]}</th>)}<th /></tr></thead><tbody>
+      {krs.map(({ k, o }) => { const hdr = o.text !== last; last = o.text;
+        return [hdr ? <tr key={'h' + o.id} className="g"><td colSpan={view === 'Q' ? 8 : 16}><b>{o.text}</b> <span className="mini">{byId(db.org_units, o.org_unit_id)?.name}</span></td></tr> : null,
+          <tr key={k.id}><td className="first ind">{k.title}{pending.has(k.id) && <Pill tone="info">change waiting for approval</Pill>}</td><td className="mini">{set(k)} · {AGG_NAME[k.aggregation || 'sum']?.split(' (')[0]} · {k.direction === 'decrease' ? 'lower is better' : k.direction === 'maintain' ? 'stay on target' : 'higher is better'}{k.uom ? ` · ${k.uom}` : ''}</td>
+            <td className="n">{k.year_target ?? '—'}</td>{(view === 'Q' ? [1, 2, 3, 4] : Array.from({ length: 12 }, (_, i) => i + 1)).map(n => { const v = cell(k, n); return <td key={n} className="n mini">{v == null ? '—' : Math.round(v * 100) / 100}</td>; })}
+            <td><button className="btn sm" onClick={() => setEdit(k)}>Set targets</button></td></tr>]; })}
+    </tbody></table></div>}
+    {edit && <KrModal unit={byId(db.objectives, edit.objective_id)?.unit_id || tUnit} init={edit} focus="targets" requestOnly={okrApproved} onClose={() => setEdit(null)} />}
   </div>;
 }
 /** Apply target changes (used directly, and by Studio when a change request is approved). */
@@ -97,13 +88,13 @@ export async function applyTargetChanges(changes: Row[]) {
 /* ---------- Deliverables, planned under each key result ---------- */
 function Deliverables() {
   const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [q, setQ] = useState(qOfMonth(curMonth())); const [scope, setScope] = useState<'team' | 'me'>(isHead(role) ? 'team' : 'me'); const [busy, setBusy] = useState(false);
-  const head = isHead(role); const [showEmpty, setShowEmpty] = useState(false); const [detail, setDetail] = useDetail('deliv');
+  const head = isHead(role); const [showEmpty, setShowEmpty] = useState(false); const [detail, setDetail] = useDetail('deliv'); const [mf, setMf] = useState(0);
   const team = useMemo(() => db && me ? (head ? teamOf(db, me, LEADS.includes(role)) : [me]) : [], [db, me, head, role]);
   const krs = useMemo(() => db && me ? workKrs(db, me, head) : [], [db, me, head]);
   const ms = qMonths(q);
   const source = useMemo(() => { if (!db || !me) return []; const ids = new Set(team.map(p => p.id));
-    return db.deliverables.filter(d => ms.includes(d.month) && d.status !== 'removed' && (scope === 'me' ? d.owner_position_id === me.id : ids.has(d.owner_position_id)) && (krs.some(x => x.k.id === d.key_result_id) || !d.key_result_id))
-      .map(d => ({ id: d.id, code: d.code || '', kind: d.kind || 'Task-based', category: d.category || '', priority: d.priority != null ? String(d.priority) : '', outcome: d.outcome || '', due: d.due_date || '', kr: d.key_result_id || '', obj: d.objective_id || '', title: d.title, owner: d.owner_position_id, month: String(d.month), weight: d.weight, target: d.target, uom: d.uom, status: d.status, source: d.source, erp: d.source === 'erp' ? '⚑ replan' : d.source === 'erp_reviewed' ? '✓ replanned' : d.source === 'proposed' ? 'proposed' : '', note: d.note || '' })); }, [db, me, team, krs, scope, q]);
+    return db.deliverables.filter(d => (mf ? d.month === mf : ms.includes(d.month)) && d.status !== 'removed' && (scope === 'me' ? d.owner_position_id === me.id : ids.has(d.owner_position_id)) && (krs.some(x => x.k.id === d.key_result_id) || !d.key_result_id))
+      .map(d => ({ id: d.id, code: d.code || '', kind: d.kind || 'Task-based', category: d.category || '', priority: d.priority != null ? String(d.priority) : '', outcome: d.outcome || '', due: d.due_date || '', kr: d.key_result_id || '', obj: d.objective_id || '', title: d.title, owner: d.owner_position_id, month: String(d.month), weight: d.weight, target: d.target, uom: d.uom, status: d.status, source: d.source, erp: d.source === 'erp' ? '⚑ replan' : d.source === 'erp_reviewed' ? '✓ replanned' : d.source === 'proposed' ? 'proposed' : '', note: d.note || '' })); }, [db, me, team, krs, scope, q, mf]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
   const cm = curMonth();
@@ -152,14 +143,15 @@ function Deliverables() {
   const perPerson = wrule === 'off' ? [] : team.map(p => ({ p, w: d.rows.filter(r => r.owner === p.id && Number(r.month) === cm).reduce((s, r) => s + (Number(r.weight) || 0), 0) })).filter(x => x.w && Math.round(x.w) !== 100);
   return <div className="stack">
     <div className="row"><p className="note" style={{ flex: 1 }}>At the start of each quarter, break each {t('key_result').toLowerCase()} into monthly {t('deliverable', true).toLowerCase()}, each with an owner. {head ? 'Assign them to your team.' : 'Add the ones you will deliver; your manager confirms them.'} A month's plan can be changed until the month starts.</p>
-      <DetailToggle v={detail} set={setDetail} />{head && <Seg value={scope} options={[['team', 'My team'], ['me', 'Mine']]} onChange={setScope} />}<Seg value={q} options={[1, 2, 3, 4].map(n => [n, 'Q' + n] as [number, string])} onChange={setQ} /></div>
+      <DetailToggle v={detail} set={setDetail} />{head && <Seg value={scope} options={[['team', 'My team'], ['me', 'Mine']]} onChange={setScope} />}<Seg value={q} options={[1, 2, 3, 4].map(n => [n, 'Q' + n] as [number, string])} onChange={v => { setQ(v); setMf(0); }} />
+      <select value={mf} onChange={e => setMf(Number(e.target.value))} aria-label="Month"><option value={0}>All months (Q{q})</option>{ms.map(m => <option key={m} value={m}>{MONTHS[m - 1]}{m === cm ? ' (now)' : ''}</option>)}</select></div>
     {head && d.rows.some(r => r.source === 'erp') && <div className="banner warn"><div><b>{d.rows.filter(r => r.source === 'erp').length} {t('deliverable', true).toLowerCase()} need replanning.</b> They were brought over from your team's personal OKRs in the ERP so no work was lost, but they are not yet planned properly. For each: pick the {t('key_result').toLowerCase()} it moves, the month, owner and weight — or delete it. Saving a row marks it replanned. <button className="btn sm" onClick={async () => { const ids = d.rows.filter(r => r.source === 'erp').map(r => r.id); await save(() => sb.from('deliverables').update({ source: 'erp_reviewed' }).in('id', ids), ['deliverables'], 'Marked as replanned'); }}>Keep all shown as they are</button></div></div>}
     {head && d.rows.some(r => r.source === 'proposed') && <div className="banner">{d.rows.filter(r => r.source === 'proposed').length} proposed by team members — adjust if needed and Save to confirm them.</div>}
     {perPerson.length > 0 && <div className="banner warn">{MONTHS[cm - 1]} weights not at 100%: {perPerson.slice(0, 6).map(x => `${x.p.holder_name?.split(' ')[0]} ${Math.round(x.w)}%`).join(' · ')}</div>}
     {krs.length > 0 && emptyKrs.length > 0 && <div className="row"><span className="mini" style={{ flex: 1 }}>{emptyKrs.length} of {krs.length} {t('key_result', true).toLowerCase()} have no {t('deliverable', true).toLowerCase()} this quarter{!showEmpty ? ' (hidden)' : ''}. New rows go under the {t('key_result').toLowerCase()} you pick in the row.</span><button className="btn sm" onClick={() => setShowEmpty(!showEmpty)}>{showEmpty ? 'Hide empty' : 'Show all'} {t('key_result', true).toLowerCase()}</button></div>}
     {!krs.length ? <Empty>{me.level === 'group' ? `Group-level positions plan through Studio; ${t('deliverable', true).toLowerCase()} are planned by units.` : `No ${t('key_result', true).toLowerCase()} in your organisation yet — ${head ? 'add them in Studio → Objective planner' : 'ask your manager or planning head'}.`}</Empty> :
       <Sheet cols={cols} rows={rows} onChange={(i, k, v) => index[i] >= 0 && d.change(index[i], k, v)} onDelete={i => index[i] >= 0 && d.remove(index[i])}
-        onAdd={!canPropose ? undefined : () => d.add({ title: '', kind: 'Task-based', category: '', priority: '2', kr: krs[0]?.k.id || '', owner: me.id, month: String(ms.includes(cm + 1) ? cm + 1 : ms.includes(cm) ? cm : ms[0]), weight: null, target: null, uom: '', status: 'planned' } as Row)} />}
+        onAdd={!canPropose ? undefined : () => d.add({ title: '', kind: 'Task-based', category: '', priority: '2', kr: krs[0]?.k.id || '', owner: me.id, month: String(mf || (ms.includes(cm + 1) ? cm + 1 : ms.includes(cm) ? cm : ms[0])), weight: null, target: null, uom: '', status: 'planned' } as Row)} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
   </div>;
 }
@@ -167,16 +159,16 @@ function Deliverables() {
 /* ---------- Weekly activities for a month (the tracker) ---------- */
 export function weeksOfMonth(m: number) { const out: Date[] = []; let w = weekStart(monthStart(FY, m)); const end = monthStart(FY, m + 1); while (w < end) { out.push(w); w = new Date(w.getTime() + 7 * 864e5); } return out; }
 function Activities() {
-  const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false); const [detail, setDetail] = useDetail('acts');
+  const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false); const [detail, setDetail] = useDetail('acts'); const [wf, setWf] = useState('');
   const head = isHead(role); const rules = db?.settings.work_rules || { activities: 'both' }; const mode = rules.activities || 'both';
   const team = useMemo(() => db && me ? (head ? teamOf(db, me, LEADS.includes(role)) : [me]) : [], [db, me, head, role]);
   const weeks = weeksOfMonth(m); const wkeys = weeks.map(w => ymd(w)); const thisWk = ymd(weekStart(new Date()));
   const people = useMemo(() => scope === 'me' ? [me!] : team, [scope, me, team]);
   const source = useMemo(() => { if (!db || !me) return []; const ids = new Set(people.map(p => p?.id));
-    return db.activities.filter(a => ids.has(a.owner_position_id) && wkeys.includes(a.week_start)).sort((a, b) => a.week_start.localeCompare(b.week_start) || Number(b.top) - Number(a.top) || (a.priority || 9) - (b.priority || 9))
+    return db.activities.filter(a => ids.has(a.owner_position_id) && (wf ? a.week_start === wf : wkeys.includes(a.week_start))).sort((a, b) => a.week_start.localeCompare(b.week_start) || Number(b.top) - Number(a.top) || (a.priority || 9) - (b.priority || 9))
       .map(a => ({ id: a.id, code: a.code || '', title: a.title, kind: a.kind || (a.unplanned ? 'Unplanned' : 'Task'), category: a.category || '', del: a.deliverable_id || '', week: a.week_start, owner: a.owner_position_id, due: a.due_date || '', priority: a.priority != null ? String(a.priority) : '',
         outcome: a.outcome || '', target: a.target, uom: a.uom || '', lower: a.lower_better ? 'Y' : '', weight: a.weight, dep: a.help_from_unit || '', dependency: a.dependency || '', top: a.top ? '★' : '', status: a.status, carried: a.carried_count || 0,
-        baseline: a.baseline_title ? (a.baseline_title !== a.title || a.baseline_week !== a.week_start ? `was: ${a.baseline_title} (${a.baseline_week ? weekLabel(new Date(a.baseline_week + 'T00:00:00Z')) : ''})` : 'as planned') : '' })); }, [db, me, people, m]);
+        baseline: a.baseline_title ? (a.baseline_title !== a.title || a.baseline_week !== a.week_start ? `was: ${a.baseline_title} (${a.baseline_week ? weekLabel(new Date(a.baseline_week + 'T00:00:00Z')) : ''})` : 'as planned') : '' })); }, [db, me, people, m, wf]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
   const dels = db.deliverables.filter(x => people.some(p => p?.id === x.owner_position_id) && x.month === m && x.status !== 'removed');
@@ -226,11 +218,12 @@ function Activities() {
     await save(() => Promise.resolve({ error: null }) as any, ['activities'], `${MONTHS[m - 1]} plan submitted — the initial plan is kept for comparison`);
     await notifyPositions(db!, [managerOf(db!, me!)?.id], 'week', `${me!.holder_name} submitted the ${MONTHS[m - 1]} activity plan`, '/record?tab=team');
   }
-  const wsDefault = wkeys.find(w => w >= thisWk) || wkeys[0];
+  const wsDefault = wf || wkeys.find(w => w >= thisWk) || wkeys[0];
   return <div className="stack">
     <div className="row"><p className="note" style={{ flex: 1 }}>At the start of the month, plan your activities week by week from your {t('deliverable', true).toLowerCase()}, with the detail of the weekly tracker. You can change the plan every week; the plan you submit first is kept as the initial plan. Progress is updated in Record → This week.{mode === 'managers' && !head ? ' In your organisation managers plan the activities; ask yours to add or change one.' : ''}</p>
       <DetailToggle v={detail} set={setDetail} />{head && <Seg value={scope} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setScope} />}
-      <select value={m} onChange={e => setM(Number(e.target.value))} aria-label="Month">{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select></div>
+      <select value={m} onChange={e => { setM(Number(e.target.value)); setWf(''); }} aria-label="Month">{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select>
+      <select value={wf} onChange={e => setWf(e.target.value)} aria-label="Week"><option value="">All weeks ({MONTHS[m - 1]})</option>{weeks.map(w => <option key={ymd(w)} value={ymd(w)}>{weekLabel(w)}{ymd(w) === thisWk ? ' (this week)' : ''}</option>)}</select></div>
     {!dels.length && <div className="banner">No {t('deliverable', true).toLowerCase()} for {MONTHS[m - 1]} yet — plan them first (Plan → {t('deliverable', true)}), or add activities without a link.</div>}
     {tooManyTop.length > 0 && <div className="banner warn">More than {topMax} top priorities (★) in {tooManyTop.map(w => weekLabel(new Date(w + 'T00:00:00Z'))).join(', ')}.</div>}
     <Sheet cols={cols} rows={d.rows} onChange={d.change} onDelete={i => canRow(d.rows[i]) && d.remove(i)} onAdd={canAdd ? () => d.add({ title: '', kind: 'Task', category: '', del: dels.find(x => x.owner_position_id === me.id)?.id || '', week: wsDefault, owner: me.id, due: '', priority: '2', top: '', status: 'Not started', baseline: '', carried: 0 } as Row) : undefined}
@@ -243,7 +236,7 @@ export function PlanPage() {
   const { role } = useData(); const { t } = useTerms(); const [sp, setSp] = useSearchParams(); const head = isHead(role);
   const tabs: [string, string][] = [...(head ? [['targets', 'Targets'] as [string, string]] : []), ['deliverables', t('deliverable', true)], ['week', 'Weekly activities']];
   const tab = sp.get('tab') && tabs.some(x => x[0] === sp.get('tab')) ? sp.get('tab')! : tabs[0][0];
-  return <div className="light wide"><div className="lhead"><div><h1>Plan</h1><p>{head ? 'Set targets for the quarter, break key results into monthly deliverables, plan the weeks.' : 'Your monthly deliverables and your weekly activities.'}</p></div></div>
+  return <div className="light wide"><div className="lhead"><div><h1>Plan</h1><p>{head ? 'Set targets for the quarter, break key results into monthly deliverables, plan the weeks.' : 'Your monthly deliverables and your weekly activities.'}<HowItWorks><h3>What this page is for</h3><p>Planning, from the quarter down to the week.</p><ul><li><b>Targets</b> (leaders) — the quarterly or monthly targets of your key results. They are set through the objective builder, so the way months combine (adds up, average, latest) and the direction (higher or lower is better) stay with the target.</li><li><b>Deliverables</b> — each key result broken into monthly outputs, each with an owner and weight. Filter by month or see the whole quarter.</li><li><b>Weekly activities</b> — the tasks for each week of the month that move the deliverables. Filter by week or see the whole month. Submit the month plan; progress is updated in Record.</li></ul></HowItWorks></p></div></div>
     <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setSp({ tab: k })}>{l}</button>)}</div>
     {tab === 'targets' && <Targets />}{tab === 'deliverables' && <Deliverables />}{tab === 'week' && <Activities />}
   </div>;
