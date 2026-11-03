@@ -360,23 +360,42 @@ export function cashFlow(db: DB, units: string[]) {
 /** Spending needs by line for a set of months, grouped by budget group, in payment order:
     committed lines first (the lines marked "must pay"), then groups in the unit's priority order and, inside a group, lines in their own order.
     Amounts are the plan in force — after approved rescopes — not the original baseline. */
-export type NeedLine = { key: string; gkey: string; line: Row; sec: string; grp: string; amount: number; base: number; must: boolean; rank: number; cum: number; tier: string };
+export type NeedLine = { key: string; gkey: string; line: Row; sec: string; grp: string; amount: number; base: number; must: boolean; rank: number; grank: number; cum: number; tier: string; plan: Row | null; byMonth: number[] };
 export type NeedGroup = { key: string; sec: string; grp: string; rank: number; amount: number; lines: NeedLine[]; committed: NeedLine[] };
 export const NEED_SECS = ['cos', 'opex', 'capex', 'proj'];
-export function needLines(db: DB, unit: string, months: number[], funds: { confirmed: number; expected: number }) {
+export const PAY_PATTERN: Record<string, string> = { planned: 'As in the plan', monthly: 'Monthly (recurring)', once: 'One payment', twice: 'Two payments' };
+/** Payment plan of a line for a quarter (when and how it is paid), if one was set. */
+export function payPlan(db: DB, unit: string, key: string, q: number) { return db.need_plan.find(p => p.unit_id === unit && p.quarter === q && p.need_key === key) || null; }
+/** What a line pays in month m: from its payment plan for that quarter, otherwise the plan in force for that month. */
+export function payIn(db: DB, unit: string, l: Row, key: string, m: number) {
+  const p = payPlan(db, unit, key, qOfMonth(m)); if (!p || p.pattern === 'planned') return lineVals(l)[m - 1];
+  const i = (p.months || []).indexOf(m); return i < 0 ? 0 : Number(p.amounts?.[i] || 0);
+}
+/** Ordering mode for a unit: by budget group (groups, then lines inside each) or one list of lines across groups. */
+export function needMode(db: DB, unit: string): 'group' | 'line' { return db.need_priority.find(n => n.unit_id === unit && n.need_key === '#mode')?.rank === 1 ? 'line' : 'group'; }
+/** Spending needs by line for a set of months, in payment order. Committed lines ("must pay") come first.
+    By group: groups in the unit's priority order and, inside a group, lines in their own order.
+    By line: one priority list across all groups (e.g. two transformer lines, then three hardware lines, then …).
+    Amounts follow each line's payment plan where set, otherwise the plan in force (after approved rescopes) — not the original baseline. */
+export function needLines(db: DB, unit: string, months: number[], funds: { confirmed: number; expected: number }, modeArg?: 'group' | 'line') {
+  const mode = modeArg || needMode(db, unit);
   const rank = (k: string, d = 999) => db.need_priority.find(n => n.unit_id === unit && n.need_key === k)?.rank ?? d;
   const groups = new Map<string, NeedGroup>();
   linesOf(db, unit).filter(l => NEED_SECS.includes(l.section)).sort((a, b) => (a.sort || 0) - (b.sort || 0)).forEach((l, i) => {
-    const grp = l.line_group || 'Other', gkey = `${l.section}|${grp}`; const amount = sum(months.map(m => lineVals(l)[m - 1])); if (amount <= 0) return;
+    const grp = l.line_group || 'Other', gkey = `${l.section}|${grp}`, key = `${gkey}|${l.id}`; const byMonth = months.map(m => payIn(db, unit, l, key, m)); const amount = sum(byMonth);
+    const base = sum(months.map(m => lineVals(l, true)[m - 1])); if (amount <= 0 && base <= 0) return;
     const g = groups.get(gkey) || { key: gkey, sec: l.section, grp, rank: rank(gkey), amount: 0, lines: [], committed: [] };
-    const n: NeedLine = { key: `${gkey}|${l.id}`, gkey, line: l, sec: l.section, grp, amount, base: sum(months.map(m => lineVals(l, true)[m - 1])), must: !!l.must_pay, rank: rank(`${gkey}|${l.id}`, 1000 + i), cum: 0, tier: '' };
+    const n: NeedLine = { key, gkey, line: l, sec: l.section, grp, amount, base, must: !!l.must_pay, rank: rank(key, 1000 + i), grank: 0, cum: 0, tier: '', plan: payPlan(db, unit, key, qOfMonth(months[0])), byMonth };
     g.amount += amount; (n.must ? g.committed : g.lines).push(n); groups.set(gkey, g);
   });
   const list = Array.from(groups.values()).sort((a, b) => a.rank - b.rank || NEED_SECS.indexOf(a.sec) - NEED_SECS.indexOf(b.sec));
   list.forEach(g => g.lines.sort((a, b) => a.rank - b.rank));
-  const order = [...list.flatMap(g => g.committed), ...list.flatMap(g => g.lines)]; let run = 0;
-  order.forEach(n => { run += n.amount; n.cum = run; n.tier = run <= Number(funds.confirmed) ? 'Funded' : run <= Number(funds.confirmed) + Number(funds.expected) ? 'Conditional' : 'Backlog'; });
-  return { groups: list, order, total: run };
+  // the group order gives every line a default place in the across-groups list
+  const byGroup = list.flatMap(g => g.lines); byGroup.forEach((n, i) => { n.grank = rank('L|' + n.key, 100000 + i); });
+  const rest = mode === 'line' ? byGroup.slice().sort((a, b) => a.grank - b.grank) : byGroup;
+  const order = [...list.flatMap(g => g.committed), ...rest]; let run = 0;
+  order.forEach(n => { run += n.amount; n.cum = run; n.tier = n.amount <= 0 ? 'Not this period' : run <= Number(funds.confirmed) ? 'Funded' : run <= Number(funds.confirmed) + Number(funds.expected) ? 'Conditional' : 'Backlog'; });
+  return { groups: list, order, rest, total: run, mode };
 }
 export function needsFor(db: DB, unit: string, q: number) {
   const ms = qMonths(q); const keys = new Map<string, { key: string; sec: string; grp: string; amount: number; must: boolean }>();
