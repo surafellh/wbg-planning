@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
 import { objScore, objState, krsOf, krState, childObjectives, liveObj, currentPeriod, periodLabel, pct, fmt, orgScoreOwn, orgScore, MONTHS, curMonth, qOfMonth, qMonths, personResult, bandOf, workStats, weekStart, ymd, weekLabel, delivScore, subtreeIds, ownShare, krDrivers, type Period } from '../../lib/calc';
-import { Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
+import { HowItWorks, Ring, Bar, StatePill, Empty, StatusStack, Seg, LineChart, BarChart, PeriodPicker, usePeriod, Pill } from '../../lib/ui';
 import { unitGoalsTree, goalScore, pillarScore, statusCounts } from '../Goals';
 import { isHead, headedOrgs } from './Plan';
 import { teamOf } from '../Work';
@@ -43,7 +43,7 @@ export function OurStrategy() {
     </div>;
   };
   return <div className="light wide">
-    <div className="lhead"><div><h1>How we cascade</h1><p>From the pillar and strategic goal down to {myOrg?.name} and your own {t('deliverable', true).toLowerCase()}: each level's {t('objective', true).toLowerCase()} deliver the one above, and their scores roll up.</p></div>
+    <div className="lhead"><div><h1>How we cascade</h1><p>From the pillar and strategic goal down to {myOrg?.name} and your own {t('deliverable', true).toLowerCase()}: each level's {t('objective', true).toLowerCase()} deliver the one above, and their scores roll up.<HowItWorks><h3>What this page is for</h3><p>How your work connects to the strategy: <b>pillar → strategic goal → unit objective → department → division → your deliverables</b>. Each objective shows its key results and, under each key result, the deliverables and weekly activities that drive it.</p><p>Use <b>My structure</b> for the chain you belong to, or <b>Whole unit</b> to see every department. Scores are for the current quarter.</p></HowItWorks></p></div>
       <div className="row"><Seg value={scope} options={[['mine', 'My structure'], ['unit', 'Whole unit']]} onChange={setScope} /><PeriodPicker value={p} onChange={setP} /></div></div>
     <div className="clegend"><span><b>Pillar</b> → <b>strategic goal</b> → <b>unit</b> {t('objective', true).toLowerCase()} → <b>department</b> → <b>division</b> → <b>you</b></span><span className="mini">Click an {t('objective').toLowerCase()} to open its {t('key_result', true).toLowerCase()}. Your organisation is highlighted. The ring is the score for {periodLabel(p)}.</span></div>
     {!tree.length ? <Empty>No cascade for {myOrg?.name} yet — its {t('objective', true).toLowerCase()} are not linked to a strategic goal. {isHead(role) ? 'Link them in Studio → Objective planner.' : 'Your manager links them when planning.'}</Empty> :
@@ -63,7 +63,7 @@ export function StrategicPlan() {
   const gst = db.strategy_statements.find(s => s.unit_id === group?.id);
   const tree = unitGoalsTree(db, me.unit_id);
   return <div className="light wide">
-    <div className="lhead"><div><h1>Strategic plan</h1><p>{unit?.name}{st?.period ? ` · ${st.period}` : ''} — where we are going.</p></div><PeriodPicker value={p} onChange={setP} /></div>
+    <div className="lhead"><div><h1>Strategic plan</h1><p>{unit?.name}{st?.period ? ` · ${st.period}` : ''} — where we are going.<HowItWorks><h3>What this page is for</h3><p>The unit's strategic plan in one place: <b>vision</b>, <b>mission</b>, <b>values</b>, and the <b>pillars</b> with their <b>strategic goals</b>. Every objective in the app delivers one of these goals. Group Strategy maintains it in Studio → Strategy builder.</p></HowItWorks></p></div><PeriodPicker value={p} onChange={setP} /></div>
     <div className="ident"><div className="lcard"><h4>Vision</h4><div className="big">{st?.vision || '—'}</div></div><div className="lcard"><h4>Mission</h4><div>{st?.mission || '—'}</div></div></div>
     {(st?.values || []).length > 0 && <div className="lcard" style={{ marginTop: 10 }}><h4>Our values</h4><div className="vals">{st!.values.map((v: Row) => <div key={v.name}><b>{v.name}</b>{v.text && <span className="note">{v.text}</span>}</div>)}</div></div>}
     {gst && st !== gst && <div className="lcard" style={{ marginTop: 10 }}><h4>Group vision</h4><div>{gst.vision}</div></div>}
@@ -91,7 +91,7 @@ export function MyInsights() {
   const myDel = months.map(m => delivScore(db, new Set([me.id]), { t: 'M', n: m }));
   const sub = head ? Array.from(subtreeIds(db, me.org_unit_id)).filter(id => id !== me.org_unit_id).map(id => byId(db.org_units, id)!).filter(Boolean) : [];
   return <div className="light wide">
-    <div className="lhead"><div><h1>My insights</h1><p>How {org?.name}, {head ? 'your team' : 'your colleagues'} and you are doing.</p></div><PeriodPicker value={p} onChange={setP} /></div>
+    <div className="lhead"><div><h1>My insights</h1><p>How {org?.name}, {head ? 'your team' : 'your colleagues'} and you are doing.<HowItWorks><h3>What this page is for</h3><p>How your organisation, your team and you are doing this period: the organisation's score and key results, deliverables accepted, the week's work done, and your own result. It is read-only — change plans in Work → Plan and record progress in Work → Record.</p></HowItWorks></p></div><PeriodPicker value={p} onChange={setP} /></div>
     <div className="tiles3">
       <Link to="/me" className="ltile"><small>My result · {periodLabel(p)}</small><b>{pct(r.R)} · {bandOf(r.R, db)}</b><Bar p={r.R} /><span>{r.s ? `${Math.round(r.s * 100)}% ${r.orgLabel.split(' · ')[0].toLowerCase()} + ${Math.round((1 - r.s) * 100)}% my work` : 'From my own work'}</span></Link>
       <Link to="/strategy" className="ltile"><small>{org?.name} · {periodLabel(p)}</small><b>{pct(orgScoreOwn(db, me.org_unit_id, p) ?? orgScore(db, me.org_unit_id, p))} of targets</b><StatusStack counts={statusCounts(db, orgKrs, p)} compact /><span>See the cascade →</span></Link>

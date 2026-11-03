@@ -65,8 +65,9 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
   </Modal>;
 }
 
-function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: () => void }) {
-  const { db } = useData(); const save = useSave();
+/** Key result builder. `requestOnly`: the OKR plan is approved, so target changes go to Group Strategy as a change request instead of applying at once. */
+export function KrModal({ unit, init, onClose, requestOnly, focus }: { unit: string; init: Row; onClose: () => void; requestOnly?: boolean; focus?: 'targets' }) {
+  const { db, me, user } = useData(); const save = useSave();
   const link0 = db?.kr_plan_links.find(l => l.kr_id === init.id);
   const t0 = Object.fromEntries((db?.kr_targets || []).filter(t => t.kr_id === init.id).map(t => [t.quarter, Number(t.target)]));
   const m0 = Object.fromEntries((db?.kr_month_targets || []).filter(t => t.kr_id === init.id).map(t => [t.month, Number(t.target)]));
@@ -91,6 +92,16 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
     const year = f.target_mode === 'annual' ? f.year_target ?? null : (f.year_target ?? implied);
     const row: Row = { objective_id: f.objective_id, title: f.title.trim(), uom: f.uom || null, aggregation: f.aggregation, direction: f.direction, target_mode: f.target_mode, tolerance: f.tolerance ?? null,
       kr_type: f.aggregation === 'sum' ? 'cumulative' : 'level', lower_is_better: f.direction === 'decrease', weight: f.weight ?? null, owner_position_id: f.owner_position_id || null, measure: f.measure, baseline: f.baseline ?? null, year_target: year, confidence: f.confidence, state: f.state || 'active', state_reason: f.state_reason || null, state_evidence: f.state_evidence || null, state_at: f.state && f.state !== 'active' ? new Date().toISOString() : null };
+    if (requestOnly && f.id) { // approved plan: targets go for approval; the rest is saved now
+      const changes: Row[] = []; const lbl = (k: string) => `${f.title} · ${k.toUpperCase()}`;
+      if ((year ?? null) !== (init.year_target ?? null)) changes.push({ kr_id: f.id, key: 'year', old: init.year_target ?? null, new: year, label: lbl('year') });
+      if (f.target_mode === 'quarterly') [1, 2, 3, 4].forEach(q => { if ((f.t[q] ?? null) !== (t0[q] ?? null)) changes.push({ kr_id: f.id, key: 'q' + q, old: t0[q] ?? null, new: f.t[q] ?? null, label: lbl('q' + q) }); });
+      if (f.target_mode === 'monthly') for (let m = 1; m <= 12; m++) if ((f.mt[m] ?? null) !== (m0[m] ?? null)) changes.push({ kr_id: f.id, key: 'm' + m, old: m0[m] ?? null, new: f.mt[m] ?? null, label: lbl('m' + m) });
+      const { year_target: _y, target_mode: _t, ...rest } = row;
+      const u1 = await sb.from('key_results').update(rest).eq('id', f.id); if (u1.error) { alert(u1.error.message); return; }
+      const ok = await save(() => changes.length ? sb.from('rescopes').insert({ unit_id: unit, kind: 'okr_targets', trigger: 'Target change', status: 'Submitted', changes, by_user: user.id, note: `${changes.length} target change(s) by ${me?.holder_name || ''}` }) : Promise.resolve({ error: null }) as any, ['key_results', 'rescopes'], changes.length ? 'Target change sent to Group Strategy for approval' : 'Key result saved');
+      if (ok) onClose(); return;
+    }
     const r = f.id ? await sb.from('key_results').update(row).eq('id', f.id).select('id').single() : await sb.from('key_results').insert(row).select('id').single();
     if (r.error) { alert(r.error.message); return; }
     const id = r.data.id;
@@ -103,8 +114,9 @@ function KrModal({ unit, init, onClose }: { unit: string; init: Row; onClose: ()
     const ok = await save(() => ms.length ? sb.from('kr_month_targets').insert(ms) : Promise.resolve({ error: null }) as any, ['key_results', 'kr_plan_links', 'kr_targets', 'kr_month_targets'], 'Key result saved');
     if (ok) onClose();
   }
-  return <Modal title={f.id ? 'Edit key result' : 'New key result'} onClose={onClose} wide>
+  return <Modal title={f.id ? (focus === 'targets' ? 'Targets — ' + (f.title || '').slice(0, 60) : 'Edit key result') : 'New key result'} onClose={onClose} wide>
     <p className="note">Objective: {obj?.text}</p>
+    {requestOnly && <div className="banner warn">The OKR plan is approved: target changes are sent to Group Strategy for approval and apply once approved. Other changes are saved straight away.</div>}
     <label className="f">Key result<input type="text" value={f.title || ''} onChange={e => set('title', e.target.value)} placeholder="Measurable result, e.g. Transformers produced" /></label>
     <div className="g3">
       <label className="f">Where the actual comes from<select value={f.measure} onChange={e => set('measure', e.target.value)}><option value="manual">Checked in with evidence</option><option value="plan">From the annual plan (revenue / budget)</option><option value="deliverables">From deliverables accepted</option><option value="children">From the objectives below</option></select></label>

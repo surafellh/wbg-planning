@@ -5,7 +5,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useData, useSave, useTerms, byId, posName, notifyPositions, managerOf, canEnterActuals, moduleOn, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { cutoffLabel, FY, monthStart, MONTHS, curMonth, qOfMonth, weekStart, weekLabel, ymd, cutoffOf, krState, currentPeriod, krTarget, monthlyValues, linesOf, planBy, actualBy, lineActual, lineVals, lineQty, sum, money, fmt, pct } from '../../lib/calc';
-import { Seg, Empty, Pill, UnitPicker } from '../../lib/ui';
+import { HowItWorks, Seg, Empty, Pill, UnitPicker } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf, WeekReview, TeamView, MonthView, CheckIns, Blockers } from '../Work';
 import { isHead, SaveBar, headedOrgs, useDetail, DetailToggle, PRI, orgOf, depOpts } from './Plan';
@@ -113,16 +113,19 @@ function MyDeliverables() {
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />{role && null}</div>;
 }
 
+const ENTER: Record<string, string> = { sum: "This month's amount only (the quarter adds the months up)", average: "This month's value (the quarter is the average)", latest: 'The level reached by the end of the month', max: "This month's value (the quarter takes the highest)", min: "This month's value (the quarter takes the lowest)" };
 function KrProgress() {
   const { db, me, role, user, can } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [busy, setBusy] = useState(false);
   const mine = useMemo(() => { if (!db || !me) return []; const led = isHead(role) ? headedOrgs(db, me, role) : new Set<string>();
     return db.key_results.filter(k => k.measure === 'manual' && (k.state || 'active') === 'active' && db.objectives.some(o => o.id === k.objective_id && o.status !== 'Archived' && o.level !== 'individual') && (k.updater_position_id === me.id || k.owner_position_id === me.id || db.objectives.some(o => o.id === k.objective_id && led.has(o.org_unit_id)))); }, [db, me, role, can]);
-  const source = useMemo(() => db ? mine.map(k => { const mv = monthlyValues(db, k); const s = krState(db, k, currentPeriod('Q')); return { id: k.id, obj: byId(db.objectives, k.objective_id)?.text, title: k.title, uom: k.uom, agg: k.aggregation || 'sum', target: krTarget(db, k, { t: 'M', n: m }), qt: s.target, value: mv[m - 1], conf: k.confidence || 'Medium', note: '', status: s.label }; }) : [], [db, mine, m]);
+  const source = useMemo(() => db ? mine.map(k => { const mv = monthlyValues(db, k); const s = krState(db, k, { t: 'Q', n: qOfMonth(m) }); return { id: k.id, obj: byId(db.objectives, k.objective_id)?.text, title: k.title, uom: k.uom, agg: k.aggregation || 'sum', target: krTarget(db, k, { t: 'M', n: m }), qt: s.target, qa: s.actual, value: mv[m - 1], conf: k.confidence || 'Medium', note: '', status: s.label }; }) : [], [db, mine, m]);
   const d = useDraft(source, [source]);
   if (!db || !me) return null;
   const cols: Col[] = [{ key: 'title', label: t('key_result'), type: 'ro', width: 300 }, { key: 'uom', label: 'Unit', type: 'ro', width: 60 },
-    { key: 'target', label: `${MONTHS[m - 1]} target`, type: 'ro', width: 100, fmt: v => fmt(v, 1) }, { key: 'qt', label: `Q${qOfMonth(curMonth())} target`, type: 'ro', width: 90, fmt: v => fmt(v, 1) },
-    { key: 'value', label: 'Actual', type: 'number', width: 100, tip: 'For results that add up (e.g. units produced) enter what was achieved in this month. For levels (e.g. on-time %) enter the level now.' },
+    { key: 'target', label: `${MONTHS[m - 1]} target`, type: 'ro', width: 100, fmt: v => fmt(v, 1) }, { key: 'qt', label: `Q${qOfMonth(m)} target`, type: 'ro', width: 90, fmt: v => fmt(v, 1) },
+    { key: 'enter', label: 'What to enter', type: 'ro', width: 190, fmt: (_, r) => ENTER[r.agg] || ENTER.sum, tip: 'Set per key result in the objective builder ("Combine the months by").' },
+    { key: 'value', label: `${MONTHS[m - 1]} actual`, type: 'number', width: 110, tip: 'Always the figure for the month you picked — never a quarter total. The app adds the months up (or averages them, or takes the latest) to get the quarter.' },
+    { key: 'qa', label: `Q${qOfMonth(m)} so far`, type: 'ro', width: 100, fmt: v => fmt(v, 1), tip: 'Worked out from the monthly actuals, the way the key result combines its months.' },
     { key: 'conf', label: 'Confidence', type: 'select', options: [['High', 'High — on course'], ['Medium', 'Medium — some risk'], ['Low', 'Low — unlikely']], width: 150, tip: 'Your judgement of whether the target will be met by the end of the quarter. Low confidence shows the result as "Behind" even if the numbers look fine, so problems surface early.' },
     { key: 'note', label: 'What happened', type: 'text', width: 240 }, { key: 'status', label: 'Status', type: 'ro', width: 100 }];
   async function doSave() {
@@ -133,7 +136,7 @@ function KrProgress() {
     await save(() => Promise.resolve({ error: err }) as any, ['check_ins', 'key_results'], 'Progress recorded'); setBusy(false);
   }
   const rows: Row[] = []; const idx: number[] = []; let last = ''; d.rows.forEach((r, i) => { if (r.obj !== last) { rows.push({ _header: r.obj }); idx.push(-1); last = r.obj; } rows.push(r); idx.push(i); });
-  return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Record the actual for each {t('key_result').toLowerCase()} of the organisation you lead (and the levels below), or that you were named to update. Results measured from the annual plan or from deliverables update themselves and are not listed.</p><select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.slice(0, curMonth()).map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select></div>
+  return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Record the <b>monthly</b> actual for each {t('key_result').toLowerCase()} of the organisation you lead (and the levels below), or that you were named to update — pick the month, then enter that month's figure as the "What to enter" column says; the quarter is worked out for you. Results measured from the annual plan or from deliverables update themselves and are not listed.</p><select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.slice(0, curMonth()).map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select></div>
     {!d.rows.length ? <Empty>No {t('key_result', true).toLowerCase()} for you to update.</Empty> : <Sheet cols={cols} rows={rows} onChange={(i, k, v) => idx[i] >= 0 && d.change(idx[i], k, v)} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></div>;
 }
@@ -231,7 +234,7 @@ export function RecordPage() {
   const fin = canEnterActuals(db, me, role);
   const tabs: [string, string][] = [['week', 'This week'], ['deliverables', t('deliverable', true)], ...(isHead(role) || updater ? [['krs', t('key_result', true)] as [string, string]] : []), ...(isHead(role) ? [['team', 'My team'] as [string, string]] : []), ...(fin ? [['finance', 'Financial actuals'] as [string, string]] : [])];
   const tab = sp.get('tab') && tabs.some(x => x[0] === sp.get('tab')) ? sp.get('tab')! : 'week';
-  return <div className="light wide"><div className="lhead"><div><h1>Record</h1><p>Update what actually happened — activities, deliverables, results{fin ? ' and financial actuals' : ''}.</p></div></div>
+  return <div className="light wide"><div className="lhead"><div><h1>Record</h1><p>Update what actually happened — activities, deliverables, results{fin ? ' and financial actuals' : ''}.<HowItWorks><h3>What this page is for</h3><p>Record what actually happened. Plans are made in <b>Plan</b>; results are recorded here.</p><ul><li><b>This week</b> — update each activity before the weekly cut-off: status, % complete, actual, blocker and evidence. Unfinished work can be carried to next week.</li><li><b>Deliverables</b> — mark a monthly deliverable done with evidence; the manager accepts it (or returns it).</li><li><b>Key results</b> — enter the month's actual for key results that are checked in by hand. Results measured from the annual plan or from deliverables update themselves.</li><li><b>My team</b> (leaders) — the team's week, check-ins and open blockers.</li><li><b>Financial actuals</b> (Finance and planners) — revenue, costs and cash for the month, per group or per line.</li></ul></HowItWorks></p></div></div>
     <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setSp({ tab: k })}>{l}</button>)}</div>
     {tab === 'week' && <ThisWeek />}{tab === 'deliverables' && <DeliverablesRec />}{tab === 'krs' && <KrProgress />}{tab === 'team' && <TeamTab />}{tab === 'finance' && <FinancialActuals />}
   </div>;
