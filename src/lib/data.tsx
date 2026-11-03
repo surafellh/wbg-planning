@@ -27,7 +27,7 @@ export const CAPS: Record<string, Role[]> = {
 
 type Ctx = {
   db: DB | null; loading: boolean; error: string | null; user: any; reload: (tables?: string[]) => Promise<void>;
-  me: Row | null; myPositions: Row[]; role: Role; can: (cap: string) => boolean; viewAs: string | null; setViewAs: (id: string | null) => void;
+  allUnits: boolean; setAllUnits: (v: boolean) => void; me: Row | null; myPositions: Row[]; role: Role; can: (cap: string) => boolean; viewAs: string | null; setViewAs: (id: string | null) => void;
   unit: string | null; setUnit: (id: string) => void; units: Row[]; toast: (m: string) => void; toastMsg: string | null;
 };
 const C = createContext<Ctx>(null as any);
@@ -40,6 +40,7 @@ export function DataProvider({ user, children }: { user: any; children: ReactNod
   const [viewAs, setViewAs] = useState<string | null>(null);
   const [unitSel, setUnitSel] = useState<string | null>(() => { try { return localStorage.getItem('wbg.unit'); } catch { return null; } });
   const [toastMsg, setToast] = useState<string | null>(null);
+  const [allSel, setAllSel] = useState<boolean>(() => { try { return localStorage.getItem('wbg.scope') !== 'unit'; } catch { return true; } });
 
   const reload = useCallback(async (tables?: string[]) => {
     try {
@@ -72,13 +73,16 @@ export function DataProvider({ user, children }: { user: any; children: ReactNod
   const units = useMemo(() => (db?.org_units || []).filter(u => u.kind === 'unit' && u.pilot).sort((a, b) => a.sort - b.sort), [db]);
   const unit = useMemo(() => {
     if (!db) return null;
-    if (can('seeGroup')) return unitSel && units.some(u => u.id === unitSel) ? unitSel : units[0]?.id || null;
+    if (can('seeGroup')) return unitSel && units.some(u => u.id === unitSel) ? unitSel : (me && units.some(u => u.id === me.unit_id) ? me.unit_id : units[0]?.id || null);
     return me?.unit_id || null;
   }, [db, can, unitSel, units, me]);
   const setUnit = (id: string) => { setUnitSel(id); try { localStorage.setItem('wbg.unit', id); } catch { /* ignore */ } };
+  /** Group roles can look at all units at once on the pages that support it (Home, Overview, Reports). */
+  const allUnits = can('seeGroup') && allSel;
+  const setAllUnits = (v: boolean) => { setAllSel(v); try { localStorage.setItem('wbg.scope', v ? 'all' : 'unit'); } catch { /* ignore */ } };
   const toast = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600); }, []);
 
-  return <C.Provider value={{ db, loading, error, user, reload, me, myPositions, role, can, viewAs, setViewAs, unit, setUnit, units, toast, toastMsg }}>{children}</C.Provider>;
+  return <C.Provider value={{ db, loading, error, user, reload, me, myPositions, role, can, viewAs, setViewAs, unit, setUnit, units, toast, toastMsg, allUnits, setAllUnits }}>{children}</C.Provider>;
 }
 
 /** Write helper: run a Supabase call, toast errors, reload the touched tables. */

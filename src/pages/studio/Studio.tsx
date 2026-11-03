@@ -8,6 +8,7 @@ import { Page, Cmd, Pill, Modal, Empty, Seg, NumIn, Bar, UnitPicker } from '../.
 import { planStatus } from '../OkrPlan';
 import { openRescope } from '../AnnualPlan';
 import { proposeScorecard, ScorecardEditor } from '../work/Inbox';
+import { IdentityModal } from '../Goals';
 import { SettingsRules, ScoringRules } from '../Settings';
 
 /* ---------- Process monitor (planning cycle and system health, like a submission monitor) ---------- */
@@ -71,34 +72,64 @@ function PillarModal({ init, unit, group, onClose }: { init: Row; unit: string; 
         if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
 }
 function GoalModal({ init, unit, group, onClose }: { init: Row; unit: string; group: boolean; onClose: () => void }) {
-  const { db } = useData(); const save = useSave(); const [f, setF] = useState<Row>(init); if (!db) return null; const tbl = group ? 'group_goals' : 'unit_goals';
-  const pillars = group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit);
-  return <Modal title={f.id ? 'Edit goal' : 'New goal'} onClose={onClose}>
-    <div className="g3"><label className="f">Pillar<select value={f.pillar_id || ''} onChange={e => setF({ ...f, pillar_id: e.target.value })}><option value="">Choose…</option>{pillars.map(p => <option key={p.id} value={p.id}>{p.code} {p.name}</option>)}</select></label><label className="f">Code<input type="text" value={f.code || ''} onChange={e => setF({ ...f, code: e.target.value })} /></label><label className="f">Weight<NumIn value={f.weight} onChange={v => setF({ ...f, weight: v })} /></label></div>
+  const { db } = useData(); const save = useSave(); const [f, setF] = useState<Row>(init);
+  const linked0 = db && init.id ? db.objectives.filter(o => o.unit_goal_id === init.id && o.status !== 'Archived').map(o => o.id) : [];
+  const [objs, setObjs] = useState<string[]>(linked0); const [busy, setBusy] = useState(false);
+  if (!db) return null; const tbl = group ? 'group_goals' : 'unit_goals';
+  const unitPillars = group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit);
+  // a unit can also place a goal under a Group pillar it does not have yet — the pillar is added to the unit on save
+  const groupOnly = group ? [] : db.group_pillars.filter(gp => !unitPillars.some(up => up.code === gp.code || up.name === gp.name));
+  const siblings = (group ? db.group_goals : db.unit_goals).filter(g => g.pillar_id === f.pillar_id && g.id !== f.id);
+  const wSum = siblings.reduce((s, g) => s + (Number(g.weight) || 0), 0) + (Number(f.weight) || 0);
+  // objectives that can sit under a goal: the unit's top objectives (those not cascaded from an objective above)
+  const candidates = group ? [] : db.objectives.filter(o => o.unit_id === unit && !o.parent_objective_id && !o.parent_kr_id && o.level !== 'individual' && o.status !== 'Archived');
+  const gg = db.group_goals.slice().sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+  async function go() {
+    setBusy(true); let pillar = f.pillar_id;
+    if (pillar?.startsWith('gp:')) { const gp = byId(db!.group_pillars, pillar.slice(3))!; const r = await sb.from('unit_pillars').insert({ unit_id: unit, code: gp.code, name: gp.name, description: 'Group pillar', sort: gp.sort }).select('id').single(); if (r.error) { alert(r.error.message); setBusy(false); return; } pillar = r.data.id; }
+    const row: Row = { pillar_id: pillar, code: f.code || null, name: f.name.trim(), description: f.description || null, weight: f.weight ?? null, sort: f.sort ?? 99 };
+    if (!group) Object.assign(row, { unit_id: unit, group_goal_id: f.group_goal_id || null, link_confirmed: !!f.link_confirmed });
+    const r = f.id ? await sb.from(tbl).update(row).eq('id', f.id).select('id').single() : await sb.from(tbl).insert(row).select('id').single();
+    if (r.error) { alert(r.error.message); setBusy(false); return; }
+    const gid = r.data.id;
+    if (!group) { const add = objs.filter(id => !linked0.includes(id)), drop = linked0.filter(id => !objs.includes(id));
+      if (add.length) await sb.from('objectives').update({ unit_goal_id: gid }).in('id', add); if (drop.length) await sb.from('objectives').update({ unit_goal_id: null }).in('id', drop); }
+    const ok = await save(() => Promise.resolve({ error: null }) as any, [tbl, 'unit_pillars', 'objectives'], 'Saved'); setBusy(false); if (ok) onClose();
+  }
+  return <Modal title={f.id ? 'Edit goal' : 'New goal'} onClose={onClose} wide>
+    <div className="g3"><label className="f">Pillar<select value={f.pillar_id || ''} onChange={e => setF({ ...f, pillar_id: e.target.value })}><option value="">Choose…</option>
+        {unitPillars.length > 0 && <optgroup label={group ? 'Group pillars' : 'This unit\'s pillars'}>{unitPillars.slice().sort((a, b) => a.sort - b.sort).map(p => <option key={p.id} value={p.id}>{p.code} {p.name}</option>)}</optgroup>}
+        {groupOnly.length > 0 && <optgroup label="Group pillars (added to this unit)">{groupOnly.map(p => <option key={p.id} value={'gp:' + p.id}>{p.code} {p.name}</option>)}</optgroup>}</select></label>
+      <label className="f">Code<input type="text" value={f.code || ''} onChange={e => setF({ ...f, code: e.target.value })} /></label>
+      <label className="f" data-tip="This goal's share of its pillar's score. The goals under one pillar should add up to 100%; if none have a weight they count equally.">Weight in the pillar (%)<NumIn value={f.weight} onChange={v => setF({ ...f, weight: v })} />{f.pillar_id && !f.pillar_id.startsWith('gp:') && <span className={'mini' + (Math.round(wSum) !== 100 && wSum ? ' neg' : '')}>Pillar total with this goal: {Math.round(wSum)}%</span>}</label></div>
     <label className="f">Goal<input type="text" value={f.name || ''} onChange={e => setF({ ...f, name: e.target.value })} /></label><label className="f">Description / target statement<textarea rows={2} value={f.description || ''} onChange={e => setF({ ...f, description: e.target.value })} /></label>
-    {!group && <div className="g2"><label className="f">Serves Group goal<select value={f.group_goal_id || ''} onChange={e => setF({ ...f, group_goal_id: e.target.value || null })}><option value="">—</option>{db.group_goals.map(g => <option key={g.id} value={g.id}>{g.code} {g.name}</option>)}</select></label><label className="row" style={{ marginTop: 22 }}><input type="checkbox" checked={!!f.link_confirmed} onChange={e => setF({ ...f, link_confirmed: e.target.checked })} /> Link confirmed with the unit</label></div>}
+    {!group && <div className="g2"><label className="f">Serves Group goal<select value={f.group_goal_id || ''} onChange={e => setF({ ...f, group_goal_id: e.target.value || null })}><option value="">—</option>{db.group_pillars.slice().sort((a, b) => a.sort - b.sort).map(gp => <optgroup key={gp.id} label={`${gp.code} · ${gp.name}`}>{gg.filter(g => g.pillar_id === gp.id).map(g => <option key={g.id} value={g.id}>{g.code} {g.name}</option>)}</optgroup>)}</select></label>
+      <label className="row" style={{ marginTop: 22 }}><input type="checkbox" checked={!!f.link_confirmed} onChange={e => setF({ ...f, link_confirmed: e.target.checked })} /> Link confirmed with the unit</label></div>}
+    {!group && <div className="card stack"><h3>Objectives that deliver this goal</h3><p className="note" style={{ margin: 0 }}>Tick the unit objectives that serve this goal. Objectives cascaded from another objective follow their parent and are not listed.</p>
+      {!candidates.length ? <p className="note">No unit objectives yet.</p> : <div style={{ maxHeight: 220, overflow: 'auto' }}>{candidates.map(o => { const other = o.unit_goal_id && o.unit_goal_id !== f.id ? byId(db.unit_goals, o.unit_goal_id) : null;
+        return <label key={o.id} className="row" style={{ gap: 8, padding: '3px 0', alignItems: 'flex-start', flexWrap: 'nowrap' }}><input type="checkbox" checked={objs.includes(o.id)} onChange={e => setObjs(e.target.checked ? [...objs, o.id] : objs.filter(x => x !== o.id))} /><span>{o.text}<span className="mini"> · {byId(db.org_units, o.org_unit_id)?.name}{other ? ` · now under ${other.code || ''} ${other.name}` : ''}</span></span></label>; })}</div>}</div>}
     <div className="row end">{f.id && <button className="btn danger" onClick={async () => { if (confirm('Delete this goal? Objectives linked to it become unlinked.') && await save(() => sb.from(tbl).delete().eq('id', f.id), [tbl, 'objectives'], 'Deleted')) onClose(); }}>Delete</button>}<span className="sp" /><button className="btn" onClick={onClose}>Cancel</button>
-      <button className="btn pri" disabled={!f.name?.trim() || !f.pillar_id} onClick={async () => { const row: Row = { pillar_id: f.pillar_id, code: f.code || null, name: f.name.trim(), description: f.description || null, weight: f.weight ?? null, sort: f.sort ?? 99 }; if (!group) Object.assign(row, { unit_id: unit, group_goal_id: f.group_goal_id || null, link_confirmed: !!f.link_confirmed });
-        if (await save(() => f.id ? sb.from(tbl).update(row).eq('id', f.id) : sb.from(tbl).insert(row), [tbl], 'Saved')) onClose(); }}>Save</button></div></Modal>;
+      <button className="btn pri" disabled={busy || !f.name?.trim() || !f.pillar_id} onClick={go}>{busy ? 'Saving…' : 'Save'}</button></div></Modal>;
 }
 export function StrategyBuilder() {
-  const { db, unit, can } = useData(); const save0 = useSave(); const sbConfirm = (id: string) => save0(() => sb.from('unit_goals').update({ link_confirmed: true }).eq('id', id), ['unit_goals'], 'Link confirmed'); const { t } = useTerms(); const [scope, setScope] = useState<'unit' | 'group'>('unit'); const [pm, setPm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null);
+  const { db, unit, can } = useData(); const save0 = useSave(); const sbConfirm = (id: string) => save0(() => sb.from('unit_goals').update({ link_confirmed: true }).eq('id', id), ['unit_goals'], 'Link confirmed'); const { t } = useTerms(); const [scope, setScope] = useState<'unit' | 'group'>('unit'); const [pm, setPm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null); const [idm, setIdm] = useState(false);
   if (!db || !unit) return null; const group = scope === 'group';
   const pillars = (group ? db.group_pillars : db.unit_pillars.filter(p => p.unit_id === unit)).slice().sort((a, b) => a.sort - b.sort);
   const goalsOf = (pid: string) => (group ? db.group_goals : db.unit_goals).filter(g => g.pillar_id === pid).sort((a, b) => a.sort - b.sort);
   const st = db.strategy_statements.find(s => s.unit_id === (group ? db.org_units.find(o => o.kind === 'group')?.id : unit));
-  return <Page title="Strategy builder" desc={`Edit the strategic identity, ${t('pillar', true).toLowerCase()} and ${t('goal', true).toLowerCase()}, and link unit goals to Group goals.`}>
+  return <Page title="Strategy builder" desc={`Edit the strategic identity, ${t('pillar', true).toLowerCase()} and ${t('goal', true).toLowerCase()}, and link unit goals to Group goals.`} help={<><h3>What this page is for</h3><p>The unit's strategy: vision, mission and values, its <b>pillars</b>, and the <b>strategic goals</b> under each pillar. Click a goal to change its pillar, its weight in the pillar, the Group goal it serves, and the objectives that deliver it. A unit can put a goal under any Group pillar — the pillar is added to the unit when you save.</p><p><b>Weights</b>: the goals of one pillar should add up to 100%. The pillar's score is the weighted score of its goals.</p><p>"To confirm" marks links proposed from the strategy documents; Group Strategy confirms them with the unit.</p></>}>
     <Cmd right={<>{can('approve') && <Seg value={scope} options={[['unit', 'Unit strategy'], ['group', 'Group strategy']]} onChange={setScope} />}<button className="btn pri" onClick={() => setPm({})}>+ {t('pillar')}</button></>} />
-    <div className="card"><div className="row"><h3 style={{ flex: 1 }}>Identity</h3><Link to="/insights/strategy">View →</Link></div><div className="mini"><b>Vision:</b> {st?.vision || '—'}</div><div className="mini"><b>Mission:</b> {st?.mission || '—'}</div><div className="mini"><b>Values:</b> {(st?.values || []).map((v: Row) => v.name).join(', ') || '—'}</div><p className="note">Edit vision, mission and values from Insights → Strategy ("Edit identity").</p></div>
-    {pillars.map(p => <div key={p.id} className="card"><div className="row"><b style={{ flex: 1 }}>{p.code} · {p.name}</b><button className="btn sm" onClick={() => setGm({ pillar_id: p.id })}>+ {t('goal')}</button><button className="btn sm" onClick={() => setPm(p)}>Edit</button></div>
+    <div className="card"><div className="row"><h3 style={{ flex: 1 }}>Identity</h3><Link to="/insights/strategy">View →</Link></div><div className="mini"><b>Vision:</b> {st?.vision || '—'}</div><div className="mini"><b>Mission:</b> {st?.mission || '—'}</div><div className="mini"><b>Values:</b> {(st?.values || []).map((v: Row) => v.name).join(', ') || '—'}</div>{!group && <div className="row" style={{ marginTop: 6 }}><button className="btn sm" onClick={() => setIdm(true)}>Edit vision, mission and values</button></div>}</div>
+    {pillars.map(p => { const gw = goalsOf(p.id).reduce((s0, g) => s0 + (Number(g.weight) || 0), 0); return <div key={p.id} className="card"><div className="row"><b style={{ flex: 1 }}>{p.code} · {p.name}</b>{goalsOf(p.id).length > 0 && <span className={'mini'} data-tip="Weights of the goals in this pillar. They should add up to 100%; with none set, goals count equally.">{gw ? <>goal weights {Math.round(gw)}%{Math.round(gw) !== 100 && <Pill tone="warn">not 100%</Pill>}</> : 'goals weighted equally'}</span>}<button className="btn sm" onClick={() => setGm({ pillar_id: p.id })}>+ {t('goal')}</button><button className="btn sm" onClick={() => setPm(p)}>Edit</button></div>
       {p.description && <div className="mini">{p.description}</div>}
-      <div className="tw" style={{ marginTop: 8 }}><table className="t"><tbody>{goalsOf(p.id).map(g => <tr key={g.id} className="click" onClick={() => setGm(g)}><td style={{ width: 60 }}>{g.code}</td><td>{g.name}{g.description && <div className="mini">{g.description}</div>}</td>
+      <div className="tw" style={{ marginTop: 8 }}><table className="t"><tbody>{goalsOf(p.id).map(g => <tr key={g.id} className="click" onClick={() => setGm(g)}><td style={{ width: 60 }}>{g.code}</td><td>{g.name}{g.description && <div className="mini">{g.description}</div>}</td><td className="n mini" style={{ width: 70 }} data-tip="Weight in the pillar">{g.weight != null ? fmt(Number(g.weight)) + '%' : '—'}</td>
         {!group && <td>{byId(db.group_goals, g.group_goal_id) ? <span className="mini">↗ {byId(db.group_goals, g.group_goal_id)?.name}</span> : <Pill tone="warn">no Group link</Pill>}{!group && !g.link_confirmed && g.group_goal_id && <span data-tip="Proposed from the strategy documents. Group Strategy confirms the link with the unit (button on the right)."><Pill tone="warn">to confirm</Pill></span>}</td>}
         <td className="n"><span data-tip={db.objectives.filter(o => o.unit_goal_id === g.id && o.status !== 'Archived').map(o => '• ' + o.text).join('\n') || 'No objectives yet'}>{db.objectives.filter(o => o.unit_goal_id === g.id && o.status !== 'Archived').length} objectives</span></td>
-        {!group && g.group_goal_id && !g.link_confirmed && can('approve') && <td><button className="btn sm" onClick={e => { e.stopPropagation(); sbConfirm(g.id); }}>Confirm link</button></td>}</tr>)}</tbody></table></div></div>)}
+        {!group && g.group_goal_id && !g.link_confirmed && can('approve') && <td><button className="btn sm" onClick={e => { e.stopPropagation(); sbConfirm(g.id); }}>Confirm link</button></td>}</tr>)}</tbody></table></div></div>; })}
     {!pillars.length && <Empty>No {t('pillar', true).toLowerCase()} yet.</Empty>}
     {pm && <PillarModal init={pm} unit={unit} group={group} onClose={() => setPm(null)} />}
     {gm && <GoalModal init={gm} unit={unit} group={group} onClose={() => setGm(null)} />}
+    {idm && <IdentityModal unit={unit} onClose={() => setIdm(false)} />}
   </Page>;
 }
 

@@ -244,19 +244,19 @@ function CosBreakdown({ db, us, months, name }: { db: DB; us: string[]; months: 
 }
 
 export default function Reports() {
-  const { db, unit, can, units } = useData(); const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') || 'summary';
-  const [scope, setScope] = useState<'unit' | 'group'>(can('seeGroup') ? 'group' : 'unit'); const [p, setP] = usePeriod();
+  const { db, unit, can, units, allUnits } = useData(); const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') || 'summary'; const [p, setP] = usePeriod();
   if (!db || !unit) return null;
-  const us = scope === 'group' ? units.map(u => u.id) : [unit]; const name = scope === 'group' ? 'Pilot units combined' : byId(db.org_units, unit)?.name || '';
+  const scope = can('seeGroup') && allUnits ? 'group' : 'unit';
+  const us = scope === 'group' ? units.map(u => u.id) : [unit]; const name = scope === 'group' ? 'All units combined' : byId(db.org_units, unit)?.name || '';
   const tabs: [string, string][] = [['summary', 'Summary'], ['okr', 'OKRs & goals'], ['org', 'Organisation & people'], ['work', 'Weekly & monthly work'], ['fin', 'Financial']];
-  return <Page title="Reports" desc="Operational, OKR, organisational, work and financial performance — for one unit or the pilot units combined." help={<>
+  return <Page title="Reports" desc="Operational, OKR, organisational, work and financial performance — for one unit or all units combined." help={<>
     <p><b>Summary</b> — each unit's OKR score, key-result status, revenue and budget use, deliverables and average person result for the period.</p>
     <p><b>OKRs & goals</b> — score by quarter and pillar, then every goal, objective or key result with target, actual and status (pace-adjusted while a period is running).</p>
     <p><b>Organisation & people</b> — every unit, department and division with its score per quarter, people and deliverables; people by performance band.</p>
     <p><b>Weekly & monthly work</b> — activity completion and how many people update each week, monthly deliverables due versus accepted, open blockers.</p>
     <p><b>Financial</b> — income statement (profitability), cash flow (cash positivity), monthly trends and plan vs actual by product group and budget line.</p>
     <p>Every table can be exported to CSV.</p></>}>
-    <div className="cmdbar">{scope === 'unit' && <UnitPicker />}{can('seeGroup') && <Seg value={scope} options={[['group', 'All pilot units'], ['unit', 'One unit']]} onChange={setScope} />}<span className="sp" />{tab !== 'fin' && tab !== 'work' && <PeriodPicker value={p} onChange={setP} />}</div>
+    <div className="cmdbar"><UnitPicker allowAll /><span className="sp" />{tab !== 'fin' && tab !== 'work' && <PeriodPicker value={p} onChange={setP} />}</div>
     <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setSp({ tab: k })}>{l}</button>)}</div>
     {tab === 'summary' && <Summary db={db} us={us} p={p} />}
     {tab === 'okr' && <OkrReport db={db} us={us} p={p} />}

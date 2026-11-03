@@ -348,3 +348,12 @@ tr.orgsub td:first-child{padding-left:22px}tr.orgsub2 td:first-child{padding-lef
 .paycell select{font-size:12px;padding:2px 4px;max-width:150px}
 .mchips{display:inline-flex;gap:2px}.mchip{font-size:11px;padding:2px 6px;border:1px solid var(--line2);border-radius:6px;background:var(--panel);color:var(--muted);cursor:pointer}
 .mchip.on{background:var(--accent);border-color:var(--accent);color:#1b1b1b;font-weight:700}
+/* horizontal comparison bars */
+.hbars{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.hb{display:grid;grid-template-columns:minmax(110px,220px) 1fr minmax(120px,190px);gap:10px;align-items:center}
+.hbn{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbb{position:relative;height:22px}
+.hbp{position:absolute;left:0;top:0;height:22px;background:var(--line2);border-radius:4px}
+.hba{position:absolute;left:0;top:6px;height:10px;background:var(--accent);border-radius:3px}.hba.neg{background:var(--bad)}
+.hbv{font-size:13px;text-align:right;white-space:nowrap}
+@media (max-width:640px){.hb{grid-template-columns:1fr;gap:2px}.hbv{text-align:left}}

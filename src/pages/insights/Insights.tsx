@@ -2,22 +2,22 @@
 import { useState } from 'react';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
 import { objScore, objState, krsOf, krState, orgScore, subtreeIds, periodLabel, pct, curMonth, MONTHS, weekStart, ymd, delivScore, avg, personResult, type Period } from '../../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, PeriodPicker, usePeriod, Drawer, StatePill, Seg, StatusStack, Empty } from '../../lib/ui';
+import { Page, Cmd, UnitPicker, Ring, Bar, Pill, PeriodPicker, usePeriod, Drawer, StatePill, Seg, StatusStack, Empty } from '../../lib/ui';
 import { unitGoalsTree, goalScore, pillarScore, statusCounts, unitKrs, KrDrawer } from '../Goals';
 import { GroupBoard, Operational, Financial } from '../Home';
 import { PersonDrawer } from '../Performance';
 import { Thread } from '../../lib/social';
 
 export function Overview() {
-  const { db, unit, can, units } = useData(); const [p, setP] = usePeriod(); if (!db || !unit) return null; const u = byId(db.org_units, unit)!;
-  return <Page title="Overview" desc={can('seeGroup') ? 'Operational and financial performance across the pilot units.' : `${u.name}: operational and financial performance.`} help={<>
+  const { db, unit, can, units, allUnits } = useData(); const [p, setP] = usePeriod(); if (!db || !unit) return null; const u = byId(db.org_units, unit)!; const all = can('seeGroup') && allUnits;
+  return <Page title="Overview" desc={all ? 'Operational and financial performance across all units.' : `${u.name}: operational and financial performance.`} help={<>
     <h3>OKR score</h3><p>The average score of a unit's own objectives for the period chosen. Each objective's score is the weighted progress of its key results against the period target, blended (by its "own share") with the weighted score of the department and division objectives below it. So the unit score reflects the whole cascade, organisation first.</p>
     <h3>Key results</h3><p>All organisation key results — unit, department and division — with their status judged on pace: early in a quarter, less is expected. "Updated" shows how many check-in key results were updated in the last 30 days.</p>
     <h3>Financial performance</h3><p>Pick one unit, all combined, or compare units; months or quarters; and the metric (revenue, gross profit, margin, opex, EBITDA, operating profit, net income, cash). Plan comes from the annual plan; actuals from Finance; cash actuals from the weekly tracker's bank positions.</p></>}>
-    <Cmd right={<PeriodPicker value={p} onChange={setP} />} />
-    {can('seeGroup') && <GroupBoard db={db} p={p} />}
-    <div style={{ marginTop: 12 }}><Operational db={db} unit={unit} p={p} /></div>
-    <div style={{ marginTop: 12 }}><Financial db={db} units={can('seeGroup') ? units.map(x => x.id) : [unit]} label={can('seeGroup') ? 'Pilot units combined' : u.name} /></div>
+    <div className="cmdbar"><UnitPicker allowAll /><span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
+    {all && <GroupBoard db={db} p={p} />}
+    {!all && <Operational db={db} unit={unit} p={p} />}
+    <div style={{ marginTop: 12 }}><Financial db={db} units={all ? units.map(x => x.id) : [unit]} label={all ? 'All units combined' : u.name} /></div>
   </Page>;
 }
 

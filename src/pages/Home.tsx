@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useData, byId, type DB, type Row } from '../lib/data';
-import { orgScore, personResult, krState, pct, money, planBy, actualBy, lastActualMonth, krsOf, weekStart, ymd, MONTHS, bandOf, currentPeriod, periodLabel, workStats, delivScore, subtreeIds, curMonth, incomeStatement, cashFlow, sum, IS_KEY, type Period } from '../lib/calc';
-import { Page, Pill, Bar, Ring, BarChart, LineChart, StatusStack, usePeriod, PeriodPicker, StatePill, Seg } from '../lib/ui';
+import { orgScore, personResult, krState, pct, money, planBy, actualBy, lastActualMonth, krsOf, weekStart, ymd, MONTHS, bandOf, currentPeriod, periodLabel, workStats, delivScore, subtreeIds, curMonth, incomeStatement, cashFlow, sum, IS_KEY, linesOf, type Period } from '../lib/calc';
+import { Page, UnitPicker, Pill, Bar, Ring, BarChart, LineChart, StatusStack, usePeriod, PeriodPicker, StatePill, Seg } from '../lib/ui';
 import { planStatus } from './OkrPlan';
 import { openRescope } from './AnnualPlan';
 import { statusCounts, unitKrs } from './Goals';
@@ -34,7 +34,7 @@ function todosFor(db: DB, me: Row, unit: string, can: (c: string) => boolean): [
 const METRICS: [string, string][] = [['rev', 'Revenue'], ['gp', 'Gross profit'], ['gpm', 'Gross margin %'], ['opex', 'Operating expenses'], ['ebitda', 'EBITDA'], ['ebit', 'Operating profit'], ['ni', 'Net income'], ['cash', 'Closing cash']];
 /** One financial block: pick a business unit or all combined, months or quarters, and the metric. */
 export function Financial({ db, units, label }: { db: DB; units: string[]; label: string }) {
-  const [scope, setScope] = useState<string>(units.length > 1 ? 'all' : units[0]); const [per, setPer] = useState<'M' | 'Q'>('M'); const [metric, setMetric] = useState('rev');
+  const [scope, setScope] = useState<string>(units.length > 1 ? 'all' : units[0]); const [per, setPer] = useState<'M' | 'Q'>('M'); const [metric, setMetric] = useState('rev'); const [cum, setCum] = useState(false);
   const us = scope === 'all' || scope === 'compare' ? units : [scope];
   const last = Math.max(0, ...us.map(u => lastActualMonth(db, u))); const ms = Array.from({ length: Math.max(last, 1) }, (_, i) => i + 1);
   const is = incomeStatement(db, us, ms, false); const K = (k: string) => IS_KEY(is, k);
@@ -56,8 +56,16 @@ export function Financial({ db, units, label }: { db: DB; units: string[]; label
       <div className={'tile ' + (ni.act != null && ni.act < 0 ? 'bad' : '')} data-tip="Revenue − cost of sales − opex − depreciation − financial charges − profit tax."><div className="tv">{money(ni.act)}</div><div className="tl">Net income</div><div className="ts">plan {money(ni.plan)}</div></div>
       {minCash != null && <div className={'tile ' + (minCash < 0 ? 'bad' : 'good')} data-tip="Lowest month-end cash in the cash flow plan."><div className="tv">{money(minCash)}</div><div className="tl">Lowest planned cash</div></div>}
     </div>
-    {scope === 'compare' ? <BarChart labels={units.map(name)} series={[{ name: 'Plan', values: units.map(u => val([u], ms, 'plan')), color: 'var(--line2)' }, { name: 'Actual', values: units.map(u => val([u], ms, 'act')), color: 'var(--accent)' }]} fmtY={fmtY} />
-      : <BarChart labels={labels} series={[{ name: 'Plan', values: cols.map(m => val(us, m, 'plan')), color: 'var(--line2)' }, { name: 'Actual', values: cols.map(m => m[0] <= Math.max(last, metric === 'cash' ? 12 : 0) ? val(us, m, 'act') : null), color: 'var(--accent)' }]} fmtY={fmtY} />}
+    {scope === 'compare' ? (() => { const withData = units.filter(u => linesOf(db, u).length || db.actuals.some(a => a.unit_id === u)); const rows = withData.map(u => ({ u, pl: val([u], ms, 'plan'), ac: val([u], ms, 'act') })).filter(r => r.pl || r.ac).sort((a, b) => (b.ac ?? b.pl ?? 0) - (a.ac ?? a.pl ?? 0)); const max = Math.max(1, ...rows.flatMap(r => [Math.abs(r.pl || 0), Math.abs(r.ac || 0)]));
+        return rows.length ? <div className="hbars">{rows.map(r => <div key={r.u} className="hb"><div className="hbn" title={name(r.u)}>{name(r.u)}</div>
+          <div className="hbb"><div className="hbp" style={{ width: (Math.abs(r.pl || 0) / max * 100) + '%' }} data-tip={`Plan ${fmtY(r.pl || 0)}`} /><div className={'hba' + ((r.ac || 0) < 0 ? ' neg' : '')} style={{ width: (Math.abs(r.ac || 0) / max * 100) + '%' }} data-tip={`Actual ${r.ac == null ? '—' : fmtY(r.ac)}`} /></div>
+          <div className="hbv"><b>{r.ac == null ? '—' : fmtY(r.ac)}</b><span className="mini"> of {fmtY(r.pl || 0)}{metric !== 'gpm' && r.pl && r.ac != null ? ` · ${pct(r.ac / r.pl)}` : ''}</span></div></div>)}
+          <div className="legend"><span><i className="none" />Plan</span><span><i style={{ background: 'var(--accent)' }} />Actual</span><span className="mini">Units with no plan or actual for this measure are left out.</span></div></div> : <p className="note">No unit has plan or actual figures yet.</p>; })()
+      : (() => { const pl = cols.map(m => val(us, m, 'plan')); const ac = cols.map(m => m[0] <= Math.max(last, metric === 'cash' ? 12 : 0) ? val(us, m, 'act') : null);
+        const run = (a: (number | null)[]) => { let t = 0; return a.map(v => { if (v == null) return null; t += v; return t; }); };
+        const additive = !['gpm', 'cash'].includes(metric); const P = cum && additive ? run(pl) : pl, A = cum && additive ? run(ac) : ac;
+        return <><BarChart labels={labels} series={[{ name: cum && additive ? 'Plan (cumulative)' : 'Plan', values: P, color: 'var(--line2)' }, { name: cum && additive ? 'Actual (cumulative)' : 'Actual', values: A, color: 'var(--accent)' }]} fmtY={fmtY} />
+          {additive && <div className="row" style={{ marginTop: 4 }}><Seg value={cum ? 'c' : 'p'} options={[['p', 'Each period'], ['c', 'Cumulative (year to date)']]} onChange={v => setCum(v === 'c')} /><span className="mini">{(() => { const i = A.map((v, j) => v != null ? j : -1).filter(j => j >= 0).pop(); return i != null && i >= 0 && P[i] ? `${labels[i]}: actual ${fmtY(A[i] as number)} vs plan ${fmtY(P[i] as number)} — ${pct((A[i] as number) / (P[i] as number))}` : ''; })()}</span></div>}</>; })()}
   </div>;
 }
 
@@ -105,20 +113,19 @@ export function GroupBoard({ db, p }: { db: DB; p: Period }) {
 }
 
 export default function Home() {
-  const { db, me, role, unit, can, units } = useData(); const [p, setP] = usePeriod(); if (!db || !me || !unit) return null;
-  const u = byId(db.org_units, unit)!; const todos = todosFor(db, me, unit, can); const r = personResult(db, me, p); const group = can('seeGroup');
-  return <Page title={`Hello, ${(me.holder_name || '').split(' ')[0] || 'there'}`} desc={group ? 'Group operational and financial performance, and what needs you.' : `${u.name}: how we are doing, and what needs you.`} help={<><h3>What this page is for</h3><p><b>What needs you</b> lists the decisions and updates waiting for you. <b>My result</b> is your score for the period. Below are the operational picture (OKR score, key results on pace, this week's work, this month's deliverables — open a unit to see its departments) and the financial picture (revenue, margins, profit and cash against plan).</p><p>Pick the period at the top right. Every card links to the page where you act on it.</p></>}>
-    <div className="cmdbar">{group && <label className="scope"><span>Unit</span><UnitSel /></label>}<span className="sp" /><PeriodPicker value={p} onChange={setP} types={['M', 'Q', 'H', 'Y']} /></div>
+  const { db, me, role, unit, can, units, allUnits } = useData(); const [p, setP] = usePeriod(); if (!db || !me || !unit) return null;
+  const u = byId(db.org_units, unit)!; const todos = todosFor(db, me, unit, can); const r = personResult(db, me, p); const group = can('seeGroup'); const all = group && allUnits;
+  return <Page title={`Hello, ${(me.holder_name || '').split(' ')[0] || 'there'}`} desc={all ? 'All units: group operational and financial performance, and what needs you.' : `${u.name}: how we are doing, and what needs you.`} help={<><h3>What this page is for</h3><p><b>What needs you</b> lists the decisions and updates waiting for you. <b>My result</b> is your score for the period. Below are the operational picture (OKR score, key results on pace, this week's work, this month's deliverables — open a unit to see its departments) and the financial picture (revenue, margins, profit and cash against plan).</p><p>Pick the period at the top right. Every card links to the page where you act on it.</p></>}>
+    <div className="cmdbar"><UnitPicker allowAll /><span className="sp" /><PeriodPicker value={p} onChange={setP} types={['M', 'Q', 'H', 'Y']} /></div>
     <div className="g2">
       <div className="card"><h2>What needs you</h2>{todos.length ? todos.slice(0, 8).map((t, i) => <Link key={i} to={t[2]} className="lg" style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}><b>{t[0]}</b><div className="note">{t[1]}</div></Link>) : <p className="note">Nothing waiting. Well done.</p>}</div>
       <div className="card"><h2>My result · {periodLabel(p)}</h2><div className="row"><Ring p={r.R} size={64} /><div><div><b>{pct(r.R)}</b> · {bandOf(r.R, db)}</div><div className="note">{byId(db.org_units, me.org_unit_id)?.name} {pct(r.org)} × {Math.round(r.s * 100)}% + my part {pct(r.personal)} × {Math.round((1 - r.s) * 100)}%</div><div className="mini">{r.basis}</div><Link to="/me">Details →</Link></div></div></div>
     </div>
-    {group && <div style={{ marginTop: 12 }}><GroupBoard db={db} p={p} /></div>}
-    {group && <div style={{ marginTop: 12 }}><Financial db={db} units={units.map(x => x.id)} label="Pilot units combined" /></div>}
-    {role !== 'employee' && <div style={{ marginTop: 12 }}><Operational db={db} unit={unit} p={p} /></div>}
-    {role !== 'employee' && <div style={{ marginTop: 12 }}><Financial db={db} units={[unit]} label={u.name} /></div>}
-    {role === 'employee' && <div style={{ marginTop: 12 }}><Operational db={db} unit={unit} p={p} /></div>}
+    {all && <div style={{ marginTop: 12 }}><GroupBoard db={db} p={p} /></div>}
+    {all && <div style={{ marginTop: 12 }}><Financial db={db} units={units.map(x => x.id)} label="All units combined" /></div>}
+    {!all && <div style={{ marginTop: 12 }}><Operational db={db} unit={unit} p={p} /></div>}
+    {!all && role !== 'employee' && <div style={{ marginTop: 12 }}><Financial db={db} units={[unit]} label={u.name} /></div>}
   </Page>;
 }
-function UnitSel() { const { units, unit, setUnit } = useData(); return <select value={unit || ''} onChange={e => setUnit(e.target.value)}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select>; }
+
 
