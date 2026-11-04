@@ -57,8 +57,25 @@ export function SettingsRules() {
   </>;
 }
 
+/** Temporary password for someone who cannot sign in: creates or resets the account, confirms the email and links the position. */
+function TempPassword({ pos, onClose }: { pos: Row; onClose: () => void }) {
+  const { reload } = useData(); const [busy, setBusy] = useState(false); const [res, setRes] = useState<Row | null>(null); const [err, setErr] = useState<string | null>(null);
+  async function go() { setBusy(true); setErr(null); const { data, error } = await sb.functions.invoke('admin-users', { body: { position_id: pos.id } });
+    if (error || data?.error) { let m = data?.error || error?.message; try { const b = await (error as any)?.context?.json?.(); if (b?.error) m = b.error; } catch { /* keep m */ } setErr(m || 'Could not set the password.'); } else { setRes(data); await reload(['positions', 'profiles']); } setBusy(false); }
+  const msg = res ? `WBG Planning sign-in\nLink: ${location.origin}\nEmail: ${res.email}\nTemporary password: ${res.password}\nYou will be asked to choose your own password after signing in.` : '';
+  return <Modal title={`Sign-in help · ${pos.holder_name || pos.title}`} onClose={onClose}>
+    {!res ? <><p>Sets a <b>temporary password</b> for <b>{pos.email}</b>. If there is no account yet, it is created with the email already confirmed, and the position is linked. At the first sign-in they must choose their own password.</p>
+      <p className="note">Any password they had before stops working. Share the temporary password privately (phone, Telegram, in person).</p>
+      {err && <div className="banner bad">{err}</div>}
+      <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={busy} onClick={go}>{busy ? 'Setting…' : 'Set temporary password'}</button></div></>
+    : <><div className="banner good">{res.created ? 'Account created' : 'Password reset'} and linked to the position.</div>
+      <label className="f">Send this to {pos.holder_name || 'them'}<textarea rows={5} readOnly value={msg} onFocus={e => e.target.select()} /></label>
+      <div className="row end"><button className="btn" onClick={() => navigator.clipboard?.writeText(msg)}>Copy message</button><button className="btn pri" onClick={onClose}>Done</button></div></>}
+  </Modal>;
+}
+
 export function SettingsPeople() {
-  const { db, units } = useData(); const save = useSave(); const [q, setQ] = useState(''); const [u, setU] = useState(''); const [ed, setEd] = useState<Row | null>(null);
+  const { db, units, can } = useData(); const save = useSave(); const [q, setQ] = useState(''); const [u, setU] = useState(''); const [ed, setEd] = useState<Row | null>(null); const [tp, setTp] = useState<Row | null>(null);
   if (!db) return null;
   const list = db.positions.filter(p => (!u || p.unit_id === u) && (!q || [p.holder_name, p.title, p.email].some(x => (x || '').toLowerCase().includes(q.toLowerCase())))).sort((a, b) => (a.unit_id || '').localeCompare(b.unit_id || '') || a.sort - b.sort);
   const linked = db.positions.filter(p => p.user_id).length;
@@ -69,8 +86,9 @@ export function SettingsPeople() {
       <button className="btn pri" onClick={() => setEd({ unit_id: units[0]?.id, org_unit_id: units[0]?.id, role: 'employee', level: 'employee', status: 'Filled' })}>+ Position</button></div>
     <div className="tw"><table className="t"><thead><tr><th>Position</th><th>Holder</th><th>Organisation</th><th>Role</th><th>Email</th><th>Sign-in</th><th /></tr></thead><tbody>
       {list.slice(0, 400).map(p => <tr key={p.id}><td>{p.title}</td><td>{p.holder_name || <span className="note">Vacant</span>}</td><td>{byId(db.org_units, p.org_unit_id)?.name}</td><td>{ROLE_NAME[p.role as keyof typeof ROLE_NAME]}</td><td>{p.email || ''}</td>
-        <td>{p.user_id ? <Pill tone="good">linked</Pill> : p.email ? <Pill tone="warn">waiting</Pill> : ''}</td><td><button className="btn sm" onClick={() => setEd(p)}>Edit</button></td></tr>)}
+        <td>{p.user_id ? <Pill tone="good">linked</Pill> : p.email ? <Pill tone="warn">waiting</Pill> : ''}</td><td><div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>{p.email && p.holder_name && can('approve') && <button className="btn sm" onClick={() => setTp(p)} data-tip="Set a temporary password for someone who cannot sign in">Sign-in help</button>}<button className="btn sm" onClick={() => setEd(p)}>Edit</button></div></td></tr>)}
     </tbody></table></div>
+    {tp && <TempPassword pos={tp} onClose={() => setTp(null)} />}
     {ed && <Modal title={ed.id ? 'Edit position' : 'New position'} onClose={() => setEd(null)}>
       <div className="g2"><label className="f">Position title<input type="text" value={ed.title || ''} onChange={e => setEd({ ...ed, title: e.target.value })} /></label><label className="f">Holder<input type="text" value={ed.holder_name || ''} onChange={e => setEd({ ...ed, holder_name: e.target.value })} /></label></div>
       <div className="g2"><label className="f">Organisation<select value={ed.org_unit_id} onChange={e => { const o = byId(db.org_units, e.target.value); setEd({ ...ed, org_unit_id: e.target.value, unit_id: o?.unit_id || o?.id }); }}>{db.org_units.filter(o => o.kind !== 'group').map(o => <option key={o.id} value={o.id}>{(o.kind === 'unit' ? '' : (byId(db.org_units, o.unit_id)?.name || '') + ' / ') + o.name}</option>)}</select></label>
