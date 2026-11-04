@@ -84,7 +84,8 @@ function QuickAdd({ wk }: { wk: string }) {
 function DeliverablesRec() {
   const { db, me, role } = useData(); const [scope, setScope] = useState<'me' | 'team'>('me'); const head = isHead(role);
   const team = useMemo(() => db && me && head ? teamOf(db, me, LEADS.includes(role)).filter(p => p.id !== me.id) : [], [db, me, head, role]);
-  return <div className="stack">{head && <div className="row"><span className="sp" /><Seg value={scope} options={[['me', 'Mine'], ['team', 'My team — review & accept']]} onChange={setScope} /></div>}
+  const waiting = db ? db.deliverables.filter(d => d.status === 'done' && team.some(p => p.id === d.owner_position_id)).length : 0;
+  return <div className="stack">{head && <div className="row"><span className="sp" /><Seg value={scope} options={[['me', 'Mine'], ['team', `My team — review & accept${waiting ? ` (${waiting} waiting)` : ''}`]]} onChange={setScope} /></div>}
     {scope === 'me' ? <MyDeliverables /> : <MonthView people={team} lead />}</div>;
 }
 function MyDeliverables() {
