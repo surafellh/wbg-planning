@@ -166,7 +166,7 @@ function cycleSteps(db: DB, me: Row, role: string, t: (k: string, pl?: boolean) 
     const man = krs.filter(k => k.measure === 'manual'); const fresh = man.filter(k => db.check_ins.some(c => c.kr_id === k.id && c.created_at > new Date(Date.now() - 30 * 864e5).toISOString()));
     if (man.length) out.push({ label: `Record progress on your ${t('key_result', true).toLowerCase()}`, done: fresh.length === man.length, detail: `${fresh.length} of ${man.length} updated in the last 30 days`, to: '/record?tab=krs', who: 'Head' });
     const waiting = db.deliverables.filter(d => d.status === 'done' && team.some(p => p.id === d.owner_position_id)).length;
-    out.push({ label: `Accept or return delivered ${t('deliverable', true).toLowerCase()}`, done: waiting === 0, detail: waiting ? `${waiting} waiting for you` : 'Nothing waiting', to: '/record?tab=deliverables', who: 'Head' });
+    out.push({ label: `Accept or return submitted ${t('deliverable', true).toLowerCase()}`, done: waiting === 0, detail: waiting ? `${waiting} waiting for you` : 'Nothing waiting', to: '/record?tab=deliverables', who: 'Head' });
     const emp = team.filter(p => p.level === 'employee'); const cards = emp.filter(p => db.scorecards.some(s => s.position_id === p.id && s.quarter === q));
     if (emp.length) out.push({ label: `Prepare Q${q} scorecards`, done: cards.length === emp.length, detail: `${cards.length} of ${emp.length} prepared`, to: '/inbox', who: 'Head' });
   }
@@ -175,7 +175,7 @@ function cycleSteps(db: DB, me: Row, role: string, t: (k: string, pl?: boolean) 
   out.push({ label: `Update this week by ${cutoffLabel()}`, done: acts.length ? acts.every(a => (a.updated_at || a.created_at) <= cut && (a.status !== 'Not started' || (a.updated_at || '') > (a.created_at || ''))) : false, detail: acts.length ? `${acts.filter(a => a.status === 'Done').length} of ${acts.length} done` : 'No activities this week yet', to: '/record?tab=week' });
   out.push({ label: 'Submit your week summary', done: !!wr?.submitted_at, detail: wr?.submitted_at ? 'Submitted' : 'Wins, blockers, asks — at the bottom of Record → This week', to: '/record?tab=week' });
   const due = myDel.filter(d => d.status === 'planned' || d.status === 'returned');
-  if (myDel.length) out.push({ label: `Deliver your ${t('deliverable', true).toLowerCase()} with evidence`, done: due.length === 0, detail: due.length ? `${due.length} not delivered yet` : 'All delivered', to: '/record?tab=deliverables' });
+  if (myDel.length) out.push({ label: `Submit your ${t('deliverable', true).toLowerCase()} with evidence`, done: due.length === 0, detail: due.length ? `${due.length} to submit — Record → Deliverables → Submit` : 'All delivered', to: '/record?tab=deliverables' });
   out.push({ label: `Agree your Q${q} scorecard`, done: sc ? sc.status === 'Agreed' : null, detail: !sc ? 'Not prepared yet by your manager' : sc.status === 'Agreed' ? 'Agreed' : sc.status === 'Proposed' ? 'Waiting for you' : 'Under discussion', to: '/me' });
   if (canEnterActuals(db, me, role) && db.plan_lines.some(l => l.unit_id === me.unit_id)) { const u = me.unit_id; const lm = Math.max(1, cm - 1); const has = db.actuals.some(a => a.unit_id === u && a.month === lm);
     out.push({ label: `Enter ${MONTHS[lm - 1]} financial actuals`, done: has, detail: has ? 'Entered' : 'Revenue, cost of sales and budget lines', to: '/record?tab=finance', who: 'Finance' }); }
