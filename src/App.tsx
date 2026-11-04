@@ -192,6 +192,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
   if (session === undefined) return null;
-  if (!session || recovery) return <Login session={recovery ? session : null} onDone={() => setRecovery(false)} />;
+  const mustChange = !!session?.user?.user_metadata?.must_change_password;
+  if (!session || recovery || mustChange) return <Login session={recovery || mustChange ? session : null} temp={mustChange} onDone={async () => { setRecovery(false); if (mustChange) { const { data } = await sb.auth.refreshSession(); setSession(data.session); } }} />;
   return <DataProvider key={session.user.id} user={session.user}><Shell /></DataProvider>;
 }
