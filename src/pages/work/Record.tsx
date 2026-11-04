@@ -89,27 +89,50 @@ function DeliverablesRec() {
     {scope === 'me' ? <MyDeliverables /> : <MonthView people={team} lead />}</div>;
 }
 function MyDeliverables() {
-  const { db, me } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [sub, setSub] = useState<Row | null>(null);
+  const { db, me, role } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [busy, setBusy] = useState(false); const [sub, setSub] = useState<Row | null>(null); const [bulk, setBulk] = useState(false);
+  const source = useMemo(() => db && me ? db.deliverables.filter(x => x.owner_position_id === me.id && x.month === m && x.status !== 'removed').map(x => ({ id: x.id, code: x.code || '', kind: x.kind || '', due: x.due_date || '', uom: x.uom || '', weight: x.weight, title: x.title, kr: byId(db.key_results, x.key_result_id)?.title || '', target: x.target, actual: x.actual, status: x.status === 'done' || x.status === 'accepted' ? 'done' : 'planned', state: x.status, evidence: x.evidence_url || '', note: x.note || '', feedback: x.feedback || '' })) : [], [db, me, m]);
+  const d = useDraft(source, [source]);
   if (!db || !me) return null;
-  const list = db.deliverables.filter(x => x.owner_position_id === me.id && x.month === m && x.status !== 'removed').sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
-  const toSubmit = list.filter(x => ['planned', 'returned'].includes(x.status));
-  const ST: Record<string, [string, string]> = { planned: ['To submit', 'none'], returned: ['Returned — fix and resubmit', 'bad'], done: ['Submitted — waiting for your manager', 'warn'], accepted: ['Accepted', 'good'] };
-  async function withdraw(d: Row) { await save(() => sb.from('deliverables').update({ status: 'planned', done_at: null }).eq('id', d.id), ['deliverables'], 'Submission withdrawn'); }
-  return <div className="stack">
-    <div className="row"><p className="note" style={{ flex: 1 }}>When a {t('deliverable').toLowerCase()} is done, click <b>Submit</b> and add the evidence. Your manager then accepts it or returns it with feedback.</p><select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select></div>
-    {toSubmit.length > 0 && <div className="banner warn"><span><b>{toSubmit.length}</b> {t('deliverable', toSubmit.length > 1).toLowerCase()} to submit for {MONTHS[m - 1]}.</span></div>}
-    {!list.length ? <Empty>No {t('deliverable', true).toLowerCase()} for {MONTHS[m - 1]}.</Empty> : <div className="dlist">{list.map(d => { const [lab, tone] = ST[d.status] || [d.status, 'none']; const k = byId(db.key_results, d.key_result_id); const acts = db.activities.filter(x => x.deliverable_id === d.id);
-      return <div key={d.id} className={'dcard ' + d.status}><div style={{ flex: 1, minWidth: 0 }}><b>{d.title}</b>
-        <div className="mini">{k ? k.title : 'Not linked to a key result'}{d.due_date ? ' · due ' + d.due_date : ''}{d.weight != null ? ` · ${d.weight}%` : ''}{d.target != null ? ` · target ${d.target} ${d.uom || ''}` : ''}{acts.length ? ` · ${acts.filter(a => a.status === 'Done').length}/${acts.length} weekly tasks done` : ''}</div>
-        {d.feedback && <div className="mini" style={{ color: d.status === 'returned' ? 'var(--bad)' : undefined }}>Manager: {d.feedback}</div>}
-        {d.evidence_url && <div className="mini"><a href={d.evidence_url} target="_blank" rel="noreferrer">evidence</a>{d.actual != null ? ` · achieved ${d.actual} ${d.uom || ''}` : ''}</div>}</div>
-        <Pill tone={tone}>{lab}</Pill>
-        {['planned', 'returned'].includes(d.status) && <button className="btn pri" onClick={() => setSub(d)}>{d.status === 'returned' ? 'Resubmit' : 'Submit'}</button>}
-        {d.status === 'done' && <button className="btn sm" onClick={() => withdraw(d)} data-tip="Take it back to change the evidence before your manager reviews it">Withdraw</button>}</div>; })}</div>}
+  const open = (r: Row) => r.state !== 'accepted';
+  const cols: Col[] = [{ key: 'code', label: 'Ref', type: 'ro', width: 74 }, { key: 'title', label: t('deliverable'), type: 'ro', width: 240 }, { key: 'kind', label: 'Result type', type: 'ro', width: 110 }, { key: 'kr', label: t('key_result'), type: 'ro', width: 190 }, { key: 'due', label: 'Due', type: 'ro', width: 95 },
+    { key: 'acts', label: 'Weekly tasks', type: 'ro', width: 110, fmt: (_, r) => { const a = db.activities.filter(x => x.deliverable_id === r.id); return a.length ? `${a.filter(x => x.status === 'Done').length} / ${a.length} done` : '—'; }, tip: 'Weekly activities linked to this deliverable.' },
+    { key: 'target', label: 'Target', type: 'ro', width: 75 }, { key: 'actual', label: 'Achieved', type: 'number', width: 90, editable: open, tip: 'For target-based deliverables: the number reached.' }, { key: 'uom', label: 'Unit', type: 'ro', width: 60 }, { key: 'weight', label: 'Weight %', type: 'ro', width: 75 },
+    { key: 'evidence', label: 'Evidence link', type: 'text', width: 200, editable: open, tip: 'A link to the document, photo or file that shows it is done.' }, { key: 'note', label: 'Note', type: 'text', width: 180, editable: open },
+    { key: 'state', label: 'Status', type: 'ro', width: 130, sticky: 'right', fmt: (v, r) => v === 'accepted' ? <Pill tone="good">Accepted</Pill> : v === 'done' ? <span className="row" style={{ gap: 4 }}><Pill tone="warn">Submitted</Pill><button className="btn xs" data-tip="Take it back before your manager reviews it" onClick={() => withdraw(r.id)}>↶</button></span> : <button className="btn sm pri" onClick={() => setSub(byId(db.deliverables, r.id)!)}>{v === 'returned' ? 'Resubmit' : 'Submit'}</button> }];
+  async function withdraw(id: string) { await save(() => sb.from('deliverables').update({ status: 'planned', done_at: null }).eq('id', id), ['deliverables'], 'Submission withdrawn'); }
+  const toSubmit = d.rows.filter(r => r.state === 'planned' || r.state === 'returned');
+  async function doSave() {
+    setBusy(true); let err: string | null = null; const sent: Row[] = [];
+    for (const r of d.all.filter(r => r._dirty)) { const s0 = source.find(x => x.id === r.id)!; const toDone = r.status === 'done' && s0.status !== 'done';
+      const x = await sb.from('deliverables').update({ actual: r.actual ?? null, evidence_url: r.evidence || null, note: r.note || null, ...(toDone ? { status: 'done', done_at: new Date().toISOString() } : r.status === 'planned' && s0.state === 'done' ? { status: 'planned' } : {}) }).eq('id', r.id);
+      err = err || x.error?.message || null; if (toDone) sent.push(r); }
+    if (sent.length) await notifyPositions(db!, [managerOf(db!, me!)?.id], 'deliverable', `${me!.holder_name} delivered ${sent.length} deliverable(s) for acceptance`, '/inbox');
+    await save(() => Promise.resolve({ error: err }) as any, ['deliverables'], 'Saved'); setBusy(false);
+  }
+  return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>When a deliverable is done, click <b>Submit</b> at the right end of its row (or submit several at once). Your manager accepts it or returns it with feedback.</p>{toSubmit.length > 1 && <button className="btn sm" onClick={() => setBulk(true)}>Submit several ({toSubmit.length})</button>}<select value={m} onChange={e => setM(Number(e.target.value))}>{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select></div>
+    {!d.rows.length ? <Empty>No {t('deliverable', true).toLowerCase()} for {MONTHS[m - 1]}.</Empty> : <Sheet cols={cols} rows={d.rows} onChange={d.change} />}
+    {d.rows.some(r => r.feedback) && <div className="card"><h4>Feedback</h4>{d.rows.filter(r => r.feedback).map(r => <div key={r.id} className="lg"><b>{r.title}</b> — {r.feedback}</div>)}</div>}
+    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />{role && null}
     {sub && <SubmitModal d={sub} onClose={() => setSub(null)} />}
-  </div>;
+    {bulk && <BulkSubmit ids={toSubmit.map(r => r.id)} onClose={() => setBulk(false)} />}</div>;
 }
-function SubmitModal({ d, onClose }: { d: Row; onClose: () => void }) {
+
+/** Submit several deliverables at once (one evidence link and note for all, optional). */
+function BulkSubmit({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+  const { db, me } = useData(); const save = useSave(); const [pick, setPick] = useState<Set<string>>(new Set()); const [ev, setEv] = useState(''); const [note, setNote] = useState(''); if (!db || !me) return null;
+  const items = ids.map(id => byId(db.deliverables, id)!).filter(Boolean);
+  async function go() {
+    const sel = Array.from(pick); const ok = await save(async () => { for (const id of sel) { const x = byId(db!.deliverables, id)!; const r = await sb.from('deliverables').update({ status: 'done', done_at: new Date().toISOString(), evidence_url: ev.trim() || x.evidence_url || null, note: note.trim() || x.note || null }).eq('id', id); if (r.error) return r; } return { error: null }; }, ['deliverables'], `${sel.length} submitted — your manager has been told`);
+    if (ok) { await notifyPositions(db!, [managerOf(db!, me!)?.id], 'deliverable', `${me!.holder_name} submitted ${sel.length} deliverables for acceptance`, '/record?tab=deliverables'); onClose(); }
+  }
+  return <Modal title="Submit several deliverables" onClose={onClose}>
+    <div className="row"><button className="btn sm" onClick={() => setPick(new Set(pick.size === items.length ? [] : items.map(x => x.id)))}>{pick.size === items.length ? 'Clear all' : 'Select all'}</button><span className="note">{pick.size} selected</span></div>
+    <div className="stack" style={{ gap: 4, maxHeight: 280, overflow: 'auto' }}>{items.map(x => <label key={x.id} className="row" style={{ gap: 8 }}><input type="checkbox" checked={pick.has(x.id)} onChange={e => { const n = new Set(pick); e.target.checked ? n.add(x.id) : n.delete(x.id); setPick(n); }} /><span>{x.title}{x.status === 'returned' && <span className="note"> · returned</span>}</span></label>)}</div>
+    <label className="f">Evidence link for all <span className="note">(optional — each keeps its own if left empty)</span><input type="url" placeholder="https://…" value={ev} onChange={e => setEv(e.target.value)} /></label>
+    <label className="f">Note <span className="note">(optional)</span><input type="text" value={note} onChange={e => setNote(e.target.value)} /></label>
+    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!pick.size} onClick={go}>Submit {pick.size || ''}</button></div></Modal>;
+}
+export function SubmitModal({ d, onClose }: { d: Row; onClose: () => void }) {
   const { db, me } = useData(); const save = useSave(); const [ev, setEv] = useState(d.evidence_url || ''); const [note, setNote] = useState(d.note || ''); const [act, setAct] = useState<string>(d.actual != null ? String(d.actual) : '');
   async function go() {
     const ok = await save(() => sb.from('deliverables').update({ status: 'done', done_at: new Date().toISOString(), evidence_url: ev.trim() || null, note: note.trim() || null, actual: act === '' ? null : Number(act) }).eq('id', d.id), ['deliverables'], 'Submitted — your manager has been told');

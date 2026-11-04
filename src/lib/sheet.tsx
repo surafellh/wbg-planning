@@ -2,12 +2,14 @@
    paste a block copied from Excel, Ctrl+Z / Ctrl+Y undo and redo. The parent keeps the rows. */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-export type Col = { key: string; label: string; type?: 'text' | 'number' | 'select' | 'date' | 'ro'; options?: [string, string][]; placeholder?: string; width?: number; tip?: string; fmt?: (v: any, row: any) => ReactNode; total?: boolean; editable?: (row: any) => boolean };
+export type Col = { key: string; label: string; type?: 'text' | 'number' | 'select' | 'date' | 'ro'; options?: [string, string][]; placeholder?: string; width?: number; tip?: string; fmt?: (v: any, row: any) => ReactNode; total?: boolean; editable?: (row: any) => boolean; sticky?: 'right' };
 type Change = { i: number; key: string; old: any; val: any };
 
-export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height, empty, footer, sticky = true }: {
+export function Sheet({ cols: cols0, rows, onChange, onAdd, onDelete, readOnly, height, empty, footer, sticky = true }: {
   sticky?: boolean; cols: Col[]; rows: any[]; onChange?: (i: number, key: string, v: any) => void; onAdd?: () => void; onDelete?: (i: number) => void; readOnly?: boolean; height?: number; empty?: string; footer?: ReactNode;
 }) {
+  // columns frozen on the right always render last
+  const cols = cols0.some(c => c.sticky === 'right') ? [...cols0.filter(c => c.sticky !== 'right'), ...cols0.filter(c => c.sticky === 'right')] : cols0;
   const [sel, setSel] = useState<[number, number] | null>(null); const [edit, setEdit] = useState<string | null>(null);
   // reading long text: wrap rows (remembered per browser) and drag a column's right edge to widen it
   const [wrap, setWrapS] = useState<boolean>(() => { try { return localStorage.getItem('wbg.sheet.wrap') === '1'; } catch { return false; } });
@@ -48,19 +50,21 @@ export function Sheet({ cols, rows, onChange, onAdd, onDelete, readOnly, height,
   // keep the main column (first one that is not the reference code) and the code column visible when scrolling sideways
   const stickTo = sticky ? Math.max(0, cols.findIndex(c => c.key !== 'code')) : -1;
   const leftOf = (j: number) => 34 + cols.slice(0, j).reduce((a, c) => a + W(c), 0);
-  const stk = (j: number) => j <= stickTo ? { position: 'sticky' as const, left: leftOf(j), zIndex: 1 } : {};
+  const hasRight = cols.some(c => c.sticky === 'right');
+  const rightOf = (j: number) => (onDelete && !readOnly ? 34 : 0) + cols.slice(j + 1).filter(c => c.sticky === 'right').reduce((a, c) => a + W(c), 0);
+  const stk = (j: number) => j <= stickTo ? { position: 'sticky' as const, left: leftOf(j), zIndex: 1 } : cols[j].sticky === 'right' ? { position: 'sticky' as const, right: rightOf(j), zIndex: 1 } : {};
   const totals = cols.map(c => c.total ? rows.filter(r => !r._header).reduce((s, r) => s + (Number(r[c.key]) || 0), 0) : null);
   return <div className="sheetwrap"><div className="sheet" ref={box} tabIndex={0} onKeyDown={onKey} onPaste={onPaste} style={height ? { maxHeight: height } : undefined}>
-    <table className={(sticky ? 'stick1' : '') + (wrap ? ' wrap' : '')}><thead><tr><th className="rn">#</th>{cols.map((c, j) => <th key={c.key} className={j <= stickTo ? 'stk' : ''} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j), ...(j <= stickTo ? { zIndex: 3 } : {}) }} data-tip={c.tip}>{c.label}<span className="colrs" title="Drag to widen · double-click to fit" onMouseDown={e => startResize(e, c)} onDoubleClick={e => { e.stopPropagation(); setWid(w => ({ ...w, [c.key]: wid[c.key] ? (c.width || 120) : Math.min(900, Math.max(W(c), ...rows.map(r => String(r[c.key] ?? '').length * 7 + 20))) })); }} /></th>)}{onDelete && !readOnly && <th className="rn" />}</tr></thead>
+    <table className={(sticky ? 'stick1' : '') + (wrap ? ' wrap' : '')}><thead><tr><th className="rn">#</th>{cols.map((c, j) => <th key={c.key} className={j <= stickTo ? 'stk' : c.sticky === 'right' ? 'stk stkr' : ''} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j), ...(j <= stickTo || c.sticky === 'right' ? { zIndex: 3 } : {}) }} data-tip={c.tip}>{c.label}<span className="colrs" title="Drag to widen · double-click to fit" onMouseDown={e => startResize(e, c)} onDoubleClick={e => { e.stopPropagation(); setWid(w => ({ ...w, [c.key]: wid[c.key] ? (c.width || 120) : Math.min(900, Math.max(W(c), ...rows.map(r => String(r[c.key] ?? '').length * 7 + 20))) })); }} /></th>)}{onDelete && !readOnly && <th className="rn" style={hasRight ? { position: 'sticky', right: 0, zIndex: 3 } : undefined} />}</tr></thead>
       <tbody>{rows.map((r, i) => r._header ? <tr key={'h' + i} className="hdr-row"><td colSpan={cols.length + 2}>{r._header}</td></tr> : <tr key={r.id || i} className={r._dirty ? 'dirty' : ''}>
         <td className="rn">{i + 1}</td>
         {cols.map((c, j) => { const on = sel && sel[0] === i && sel[1] === j; const ed = on && edit !== null; const v = r[c.key]; const ro = !can(i, j);
-          return <td key={c.key} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j) }} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (j <= stickTo ? 'stk ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={e => { if (['INPUT', 'SELECT', 'BUTTON'].includes((e.target as HTMLElement).tagName)) return; const open = can(i, j) && c.type !== 'select'; if (open) e.preventDefault(); if (!on) { commit(); setSel([i, j]); if (open) setEdit(v == null ? '' : String(v)); else box.current?.focus(); } else if (edit === null && open) setEdit(v == null ? '' : String(v)); }} title={ro && c.type !== 'ro' && !readOnly ? 'Locked' : undefined}>
+          return <td key={c.key} style={{ width: W(c), minWidth: W(c), maxWidth: W(c), ...stk(j) }} className={(on ? 'sel ' : '') + (ro ? 'ro ' : '') + (j <= stickTo ? 'stk ' : c.sticky === 'right' ? 'stk stkr ' : '') + (c.type === 'number' ? 'n' : '')} onMouseDown={e => { if (['INPUT', 'SELECT', 'BUTTON'].includes((e.target as HTMLElement).tagName)) return; const open = can(i, j) && c.type !== 'select'; if (open) e.preventDefault(); if (!on) { commit(); setSel([i, j]); if (open) setEdit(v == null ? '' : String(v)); else box.current?.focus(); } else if (edit === null && open) setEdit(v == null ? '' : String(v)); }} title={ro && c.type !== 'ro' && !readOnly ? 'Locked' : undefined}>
             {ed ? <input ref={el => { inp.current = el; }} type={c.type === 'date' ? 'date' : 'text'} inputMode={c.type === 'number' ? 'decimal' : undefined} value={edit!} onChange={e => setEdit(e.target.value)} onBlur={commit} />
               : c.type === 'select' && !ro ? <select className={v ? '' : 'empty'} value={v ?? ''} onChange={e => set(i, c.key, e.target.value || null)} onFocus={() => setSel([i, j])}>{<option value="">{c.placeholder || '—'}</option>}{(c.options || []).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
               : c.fmt ? c.fmt(v, r) : c.type === 'select' ? ((c.options || []).find(o => o[0] === v)?.[1] ?? '') : c.type === 'number' ? (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })) : (v ?? '')}
           </td>; })}
-        {onDelete && !readOnly && <td className="rn"><button className="xdel" title="Delete row" onClick={() => onDelete(i)}>×</button></td>}
+        {onDelete && !readOnly && <td className="rn" style={hasRight ? { position: 'sticky', right: 0, zIndex: 1 } : undefined}><button className="xdel" title="Delete row" onClick={() => onDelete(i)}>×</button></td>}
       </tr>)}
         {!rows.length && <tr><td colSpan={cols.length + 2} className="note" style={{ padding: 14 }}>{empty || 'No rows yet.'}</td></tr>}
         {totals.some(t => t != null) && <tr className="tot"><td className="rn" />{cols.map((c, j) => <td key={c.key} className={c.type === 'number' ? 'n' : ''}>{j === 0 ? 'Total' : totals[j] != null ? totals[j]!.toLocaleString('en-US', { maximumFractionDigits: 0 }) : ''}</td>)}{onDelete && !readOnly && <td />}</tr>}

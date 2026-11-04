@@ -9,6 +9,7 @@ import { HowItWorks, Seg, Empty, Pill } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf } from '../Work';
 import { planStatus, KrModal } from '../OkrPlan';
+import { SubmitModal } from './Record';
 
 const LEADS = ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'];
 export const isHead = (role: string) => role !== 'employee';
@@ -88,7 +89,7 @@ export async function applyTargetChanges(changes: Row[]) {
 /* ---------- Deliverables, planned under each key result ---------- */
 function Deliverables() {
   const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [q, setQ] = useState(qOfMonth(curMonth())); const [scope, setScope] = useState<'team' | 'me'>(isHead(role) ? 'team' : 'me'); const [busy, setBusy] = useState(false);
-  const head = isHead(role); const [showEmpty, setShowEmpty] = useState(false); const [detail, setDetail] = useDetail('deliv'); const [mf, setMf] = useState(0);
+  const head = isHead(role); const [showEmpty, setShowEmpty] = useState(false); const [detail, setDetail] = useDetail('deliv'); const [mf, setMf] = useState(0); const [sub, setSub] = useState<Row | null>(null);
   const team = useMemo(() => db && me ? (head ? teamOf(db, me, LEADS.includes(role)) : [me]) : [], [db, me, head, role]);
   const krs = useMemo(() => db && me ? workKrs(db, me, head) : [], [db, me, head]);
   const ms = qMonths(q);
@@ -122,7 +123,7 @@ function Deliverables() {
     { key: 'target', label: 'Target', type: 'number', width: 80, editable: open }, { key: 'uom', label: 'Unit', type: 'text', width: 70, editable: open },
     { key: 'weight', label: 'Weight %', type: 'number', width: 80, editable: open, tip: "Share of the owner's month. A person's deliverables in a month should add up to 100%." },
     ...(detail ? [{ key: 'acts', label: 'Weekly tasks', type: 'ro' as const, width: 110, tip: 'Weekly activities linked to this deliverable: done / planned.', fmt: (_: any, r: Row) => { const a = db.activities.filter(x => x.deliverable_id === r.id); return a.length ? `${a.filter(x => x.status === 'Done').length} / ${a.length} done` : '—'; } }] : []),
-    { key: 'status', label: 'Status', type: 'ro', width: 100 },
+    { key: 'status', label: 'Status', type: 'ro', width: 120, sticky: 'right', tip: 'Your own deliverables can be submitted here when done (or in Record → Deliverables). Your manager then accepts or returns them.', fmt: (v: any, r: Row) => r._new || !r.id ? <span className="note">new</span> : r.owner === me!.id && (v === 'planned' || v === 'returned') ? <button className="btn sm pri" onClick={() => setSub(byId(db.deliverables, r.id)!)}>{v === 'returned' ? 'Resubmit' : 'Submit'}</button> : <Pill tone={v === 'accepted' ? 'good' : v === 'done' ? 'warn' : v === 'returned' ? 'bad' : 'none'}>{v === 'done' ? 'Submitted' : v === 'accepted' ? 'Accepted' : v === 'returned' ? 'Returned' : 'Planned'}</Pill> },
     ...(d.rows.some(r => r.source === 'erp' || r.source === 'erp_reviewed') ? [{ key: 'note', label: 'Original ERP OKR', type: 'ro' as const, width: 240, fmt: (v: any) => String(v || '').replace('From ERP personal OKR: ', '') }] : []),
     { key: 'erp', label: 'Source', type: 'ro', width: 110, tip: '⚑ replan: brought over from a personal OKR in the ERP. Link it to the right key result, set the month, owner and weight — or delete it. Saving the row marks it replanned. "proposed" = added by a team member, waiting for the manager.' }];
   async function doSave() {
@@ -153,6 +154,7 @@ function Deliverables() {
       <Sheet cols={cols} rows={rows} onChange={(i, k, v) => index[i] >= 0 && d.change(index[i], k, v)} onDelete={i => index[i] >= 0 && d.remove(index[i])}
         onAdd={!canPropose ? undefined : () => d.add({ title: '', kind: 'Task-based', category: '', priority: '2', kr: krs[0]?.k.id || '', owner: me.id, month: String(mf || (ms.includes(cm + 1) ? cm + 1 : ms.includes(cm) ? cm : ms[0])), weight: null, target: null, uom: '', status: 'planned' } as Row)} />}
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
+    {sub && <SubmitModal d={sub} onClose={() => setSub(null)} />}
   </div>;
 }
 
