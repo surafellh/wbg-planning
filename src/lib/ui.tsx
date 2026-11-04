@@ -146,3 +146,26 @@ export function ViewTabs({ items }: { items: [string, string, string?][] }) {
   const loc = useLocation();
   return <div className="vtabs">{items.map(([to, label, tip]) => <Link key={to} to={to} className={loc.pathname === to ? 'on' : ''} data-tip={tip}>{label}</Link>)}</div>;
 }
+
+/** "⋯" menu holding the actions of a row, so rows stay readable. */
+export type MenuItem = { label: string; onClick: () => void; danger?: boolean; tip?: string; hidden?: boolean };
+export function MoreMenu({ items, label = 'More actions' }: { items: MenuItem[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!open) return; const h = () => setOpen(false); const t = setTimeout(() => document.addEventListener('click', h), 0); return () => { clearTimeout(t); document.removeEventListener('click', h); }; }, [open]);
+  const vis = items.filter(i => !i.hidden); if (!vis.length) return null;
+  return <span className="more" onClick={e => e.stopPropagation()}><button className="morebtn" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>⋯</button>
+    {open && <span className="moremenu" role="menu">{vis.map(i => <button key={i.label} role="menuitem" className={i.danger ? 'danger' : ''} data-tip={i.tip} onClick={() => { setOpen(false); i.onClick(); }}>{i.label}</button>)}</span>}</span>;
+}
+
+/** A split of 100%: one coloured segment per part, with the total checked. */
+const SPLIT_COLORS = ['#4f7cac', '#c9a227', '#5a9e6f', '#b5654a', '#8a6fb0', '#3f9aa6', '#a3804b', '#6b7a8f'];
+export function WeightSplit({ parts, label, compact }: { parts: { name: string; w: number | null }[]; label?: string; compact?: boolean }) {
+  if (!parts.length) return null;
+  const set = parts.filter(p => p.w != null); const tot = set.reduce((a, p) => a + Number(p.w), 0); const eq = !set.length;
+  const shown = parts.map(p => ({ ...p, v: eq ? 100 / parts.length : Number(p.w || 0) }));
+  const ok = eq || Math.round(tot) === 100;
+  return <div className={'wsplit' + (compact ? ' compact' : '')}>{label && <span className="wsl">{label}</span>}
+    <span className="wbar">{shown.map((p, i) => <i key={i} style={{ width: Math.max(0, p.v) / Math.max(100, eq ? 100 : tot) * 100 + '%', background: SPLIT_COLORS[i % SPLIT_COLORS.length] }} data-tip={`${p.name} — ${Math.round(p.v * 10) / 10}%${eq ? ' (equal, no weights set)' : ''}`} />)}</span>
+    <span className={'wtot ' + (ok ? 'ok' : 'bad')} data-tip={eq ? 'No weights set — each counts equally' : ok ? 'Weights add up to 100%' : `Weights add up to ${Math.round(tot * 10) / 10}% — they should add up to 100%`}>{eq ? 'equal' : Math.round(tot) + '%'}{ok ? ' ✓' : ' ⚠'}</span></div>;
+}
+export const splitColor = (i: number) => SPLIT_COLORS[i % SPLIT_COLORS.length];
