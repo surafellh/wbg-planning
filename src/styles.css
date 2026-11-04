@@ -368,3 +368,6 @@ td>.cbar{width:100%}
 .btn.xs{padding:0 6px;font-size:11px;line-height:18px;min-height:0}
 
 .vtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 12px}.vtabs a{padding:7px 12px;text-decoration:none;color:var(--muted,#666);font-weight:600;font-size:14px;border-bottom:2px solid transparent;margin-bottom:-1px}.vtabs a.on{color:var(--ink,#111);border-bottom-color:var(--accent,#c9a227)}
+
+.dlist{display:flex;flex-direction:column;gap:8px}.dcard{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.dcard.returned{border-color:var(--bad)}.dcard.accepted{opacity:.8}
