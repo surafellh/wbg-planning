@@ -1,7 +1,7 @@
 /* INSIGHTS WINDOW — the full picture for leaders: overview, alignment / cascade, who is doing what. */
 import { useState } from 'react';
 import { useData, useTerms, byId, posName, type DB, type Row } from '../../lib/data';
-import { objScore, objState, krsOf, krState, orgScore, subtreeIds, periodLabel, pct, curMonth, MONTHS, weekStart, ymd, delivScore, avg, personResult, type Period } from '../../lib/calc';
+import { objScore, objState, krsOf, krState, orgScore, subtreeIds, periodLabel, periodMonths, pct, curMonth, MONTHS, weekStart, ymd, delivScore, avg, personResult, type Period } from '../../lib/calc';
 import { Page, Cmd, UnitPicker, Ring, Bar, Pill, PeriodPicker, usePeriod, Drawer, StatePill, Seg, StatusStack, Empty , ViewTabs } from '../../lib/ui';
 import { unitGoalsTree, goalScore, pillarScore, statusCounts, unitKrs, KrDrawer } from '../Goals';
 import { GroupBoard, Operational, Financial } from '../Home';
@@ -79,7 +79,7 @@ export function WhoDoesWhat() {
   const ids = subtreeIds(db, org || unit); const wk = ymd(weekStart(new Date()));
   const rows = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name).map(x => {
     const objs = db.objectives.filter(o => o.owner_position_id === x.id); const krs = db.key_results.filter(k => k.owner_position_id === x.id);
-    const dels = db.deliverables.filter(d => d.owner_position_id === x.id && d.month === curMonth() && d.status !== 'removed'); const acts = db.activities.filter(a => a.owner_position_id === x.id && a.week_start === wk);
+    const pm = periodMonths(p); const dels = db.deliverables.filter(d => d.owner_position_id === x.id && pm.includes(d.month) && (p.full || d.month <= curMonth()) && d.status !== 'removed'); const acts = db.activities.filter(a => a.owner_position_id === x.id && a.week_start === wk);
     const r = personResult(db, x, p);
     return { x, objs: objs.length, krs: krs.length, krOff: krs.filter(k => krState(db, k, p).tone === 'bad').length, dels: dels.length, delAcc: dels.filter(d => d.status === 'accepted').length, acts: acts.length, done: acts.filter(a => a.status === 'Done').length, stuck: acts.filter(a => a.status === 'Stuck').length, load: objs.length * 3 + krs.length * 2 + dels.length * 2 + acts.length, R: r.R };
   }).sort((a, b) => sort === 'name' ? (a.x.holder_name || '').localeCompare(b.x.holder_name || '') : sort === 'load' ? b.load - a.load : (b.R ?? -1) - (a.R ?? -1));
@@ -88,7 +88,7 @@ export function WhoDoesWhat() {
   return <Page title="People" desc={`Each person's ${t('objective', true).toLowerCase()}, ${t('key_result', true).toLowerCase()}, this month's ${t('deliverable', true).toLowerCase()} and this week's activities — spot overload and idle capacity.`} help={<p>Load is a simple indicator: objectives ×3, key results ×2, deliverables this month ×2, activities this week ×1. Click a person for their full picture.</p>}>
     <ViewTabs items={[['/insights/people', 'Results', 'Each person’s result and band for the period'], ['/insights/people-work', 'Workload', 'Who is doing what: objectives, deliverables and this week’s activities per person']]} />
     <Cmd right={<><select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">Whole unit</option>{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select><Seg value={sort} options={[['load', 'By load'], ['result', 'By result'], ['name', 'By name']]} onChange={setSort} /><PeriodPicker value={p} onChange={setP} /></>} />
-    {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th className="n">{t('objective', true)}</th><th className="n">{t('key_result', true)}</th><th className="n">Off track</th><th className="n">{MONTHS[curMonth() - 1]} {t('deliverable', true).toLowerCase()}</th><th className="n">This week</th><th className="n">Stuck</th><th>Load</th><th>Result</th></tr></thead><tbody>
+    {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th className="n">{t('objective', true)}</th><th className="n">{t('key_result', true)}</th><th className="n">Off track</th><th className="n">{t('deliverable', true)} · {periodLabel(p)}</th><th className="n">This week</th><th className="n">Stuck</th><th>Load</th><th>Result</th></tr></thead><tbody>
       {rows.map(r => <tr key={r.x.id} className="click" onClick={() => setPick(r.x)}><td><b>{r.x.holder_name}</b><div className="mini">{r.x.title}</div></td><td className="n">{r.objs || ''}</td><td className="n">{r.krs || ''}</td><td className="n">{r.krOff ? <Pill tone="bad">{r.krOff}</Pill> : ''}</td><td className="n">{r.dels ? `${r.delAcc}/${r.dels}` : ''}</td><td className="n">{r.acts ? `${r.done}/${r.acts}` : <span className="note">none</span>}</td><td className="n">{r.stuck || ''}</td>
         <td><div className="loadbar"><i style={{ width: (r.load / maxLoad * 100) + '%' }} /></div></td><td><Bar p={r.R} /> {pct(r.R)}</td></tr>)}
     </tbody></table></div>}

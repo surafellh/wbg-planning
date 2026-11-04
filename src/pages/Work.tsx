@@ -205,7 +205,7 @@ export function CheckIns({ people, lead }: { people: Row[]; lead: boolean }) {
 }
 
 export function TeamView({ people, ws, setWs }: { people: Row[]; ws: Date; setWs: (d: Date) => void }) {
-  const { db } = useData(); const [pick, setPick] = useState<Row | null>(null); if (!db) return null;
+  const { db, me } = useData(); const [pick, setPick] = useState<Row | null>(null); if (!db) return null;
   const wk = ymd(ws); const cut = cutoffOf(ws).toISOString(); const tot = workStats(db, new Set(people.map(p => p.id)), wk);
   const pend = db.deliverables.filter(d => d.status === 'done' && people.some(p => p.id === d.owner_position_id));
   const rows = people.map(p => { const a = db.activities.filter(x => x.owner_position_id === p.id && x.week_start === wk); const r = db.week_reviews.find(x => x.position_id === p.id && x.week_start === wk);
@@ -217,10 +217,10 @@ export function TeamView({ people, ws, setWs }: { people: Row[]; ws: Date; setWs
       <div className={'tile ' + (tot.stuck ? 'bad' : '')}><div className="tv">{tot.stuck}</div><div className="tl">Stuck</div></div><div className="tile"><div className="tv">{rows.filter(r => r.r?.submitted_at).length}</div><div className="tl">Week summaries submitted</div></div>
       <div className={'tile ' + (pend.length ? 'warn' : '')}><div className="tv">{pend.length}</div><div className="tl">Deliverables to accept</div></div></div>
     <div className="tw"><table className="t"><thead><tr><th>Person</th><th className="n">Activities</th><th>Done</th><th className="n">Stuck</th><th>Updated by cut-off</th><th>Summary</th><th>Feedback</th></tr></thead><tbody>
-      {rows.map(r => <tr key={r.p.id} className="click" onClick={() => setPick(r.p)}><td><b>{r.p.holder_name}</b><div className="mini">{r.p.title}</div></td><td className="n">{r.a.length}</td><td><Bar p={r.comp} /> {pct(r.comp)}</td><td className="n">{r.stuck || ''}</td>
-        <td>{r.a.length ? (r.onTime ? <Pill tone="good">yes</Pill> : <Pill tone="warn">late</Pill>) : <Pill tone="bad">no plan</Pill>}</td><td>{r.r?.submitted_at ? <Pill tone="good">submitted</Pill> : <span className="note">—</span>}</td><td>{r.r?.rating ? '★'.repeat(r.r.rating) : <span className="note">give</span>}</td></tr>)}
+      {rows.map(r => <tr key={r.p.id} className="click" onClick={() => setPick(r.p)}><td><b>{r.p.holder_name}</b>{r.p.id === me?.id && <span className="note"> (me)</span>}<div className="mini">{r.p.title}</div></td><td className="n">{r.a.length}</td><td><Bar p={r.comp} /> {pct(r.comp)}</td><td className="n">{r.stuck || ''}</td>
+        <td>{r.a.length ? (r.onTime ? <Pill tone="good">yes</Pill> : <Pill tone="warn">late</Pill>) : <Pill tone="bad">no plan</Pill>}</td><td>{r.r?.submitted_at ? <Pill tone="good">submitted</Pill> : <span className="note">—</span>}</td><td>{r.r?.rating ? '★'.repeat(r.r.rating) : r.p.id === me?.id ? <span className="note">from your manager</span> : <span className="note">give</span>}</td></tr>)}
     </tbody></table></div>
-    {pick && <Drawer title={pick.holder_name} onClose={() => setPick(null)}><MyWeekCompact who={pick} wk={wk} /><WeekReview me={pick} wk={wk} mine={false} /></Drawer>}
+    {pick && <Drawer title={pick.holder_name} onClose={() => setPick(null)}><MyWeekCompact who={pick} wk={wk} /><WeekReview me={pick} wk={wk} mine={pick.id === me?.id} /></Drawer>}
   </div>;
 }
 export function MyWeekCompact({ who, wk }: { who: Row; wk: string }) {

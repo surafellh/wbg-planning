@@ -258,7 +258,7 @@ function TeamTab() {
   if (!db || !me) return null;
   return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Your team: who has planned and updated their week, week summaries to read and rate, key results waiting for a check-in, and anything stuck.</p>
     <Seg value={v} options={[['week', 'Week'], ['checkins', 'Key result check-ins'], ['blockers', 'Blockers']]} onChange={setV} /></div>
-    {v === 'week' ? <TeamView people={team} ws={ws} setWs={setWs} /> : v === 'checkins' ? <CheckIns people={[me, ...team]} lead /> : <Blockers people={team} />}</div>;
+    {v === 'week' ? <TeamView people={[me, ...team]} ws={ws} setWs={setWs} /> : v === 'checkins' ? <CheckIns people={[me, ...team]} lead /> : <Blockers people={[me, ...team]} />}</div>;
 }
 
 export function RecordPage() {
