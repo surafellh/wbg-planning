@@ -6,6 +6,7 @@ import { sb } from '../lib/supabase';
 import { weekStart, weekLabel, ymd, monthOf, MONTHS, krsOf, cutoffOf, cutoffLabel, curMonth, FY, krState, pct, workStats, delivScore, periodLabel, currentPeriod, qOfMonth } from '../lib/calc';
 import { Page, Seg, Pill, Empty, Modal, NumIn, Drawer, Bar, UnitPicker, StatePill } from '../lib/ui';
 import { KrDrawer } from './Goals';
+import { FileChips } from '../lib/files';
 
 const ST = ['Not started', 'In progress', 'Done', 'Stuck'];
 const tone = (s: string) => (s === 'Done' || s === 'accepted' ? 'good' : s === 'Stuck' || s === 'returned' ? 'bad' : s === 'In progress' || s === 'done' ? 'warn' : 'none');
@@ -150,7 +151,7 @@ export function MonthView({ people, lead }: { people: Row[]; lead: boolean }) {
       Array.from(byKr.entries()).map(([kid, list]) => { const k = byId(db.key_results, kid);
         return <div key={kid} className="card" style={{ padding: 0 }}><div style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)' }}><b>{k ? k.title : 'Not linked to a key result'}</b>{k && <div className="mini">{byId(db.objectives, k.objective_id)?.text}</div>}</div>
           <div className="tw" style={{ border: 0, borderRadius: 0 }}><table className="t"><tbody>{list.map(d => { const own = d.owner_position_id === me.id; const mgr = can('managePeople') && !own; const na = db.activities.filter(a => a.deliverable_id === d.id);
-            return <tr key={d.id}><td style={{ width: '40%' }}><b>{d.title}</b>{d.target != null && <div className="mini">Target {d.target} {d.uom || ''}</div>}{d.evidence_url && <div><a href={d.evidence_url} target="_blank" rel="noreferrer">evidence</a></div>}{d.feedback && <div className="mini">Feedback: {d.feedback}</div>}</td>
+            return <tr key={d.id}><td style={{ width: '40%' }}><b>{d.title}</b>{d.target != null && <div className="mini">Target {d.target} {d.uom || ''}</div>}{d.evidence_url && <div><a href={d.evidence_url} target="_blank" rel="noreferrer">evidence</a></div>}<FileChips deliverableId={d.id} />{d.feedback && <div className="mini">Feedback: {d.feedback}</div>}</td>
               <td>{posName(db, d.owner_position_id)}<div className="mini">{na.length} activities · {na.filter(a => a.status === 'Done').length} done</div></td><td className="n">{d.weight != null ? d.weight + '%' : ''}</td>
               <td><Pill tone={tone(d.status)}>{DSTATUS[d.status]}</Pill>{d.rating ? <div className="mini">{'★'.repeat(d.rating)}</div> : null}</td>
               <td><div className="row" style={{ justifyContent: 'flex-end' }}>{own && ['planned', 'returned'].includes(d.status) && <button className="btn sm pri" onClick={() => { const ev = prompt('Link to evidence (optional)') ?? ''; save(() => sb.from('deliverables').update({ status: 'done', evidence_url: ev || null, done_at: new Date().toISOString() }).eq('id', d.id), ['deliverables'], 'Delivered — sent for acceptance').then(() => { const o = byId(db.positions, d.owner_position_id); return notifyPositions(db, [o && managerOf(db, o)?.id], 'deliverable', `${o?.holder_name} delivered: ${d.title}`, '/inbox'); }); }}>Submit</button>}
@@ -163,7 +164,7 @@ export function MonthView({ people, lead }: { people: Row[]; lead: boolean }) {
 }
 export function AcceptForm({ d, onDone }: { d: Row; onDone: () => void }) {
   const save = useSave(); const { db } = useData(); const [rt, setRt] = useState(4); const [fb, setFb] = useState(''); const [act, setAct] = useState<number | null>(d.target);
-  return <div className="stack"><b>{d.title}</b>{d.evidence_url && <a href={d.evidence_url} target="_blank" rel="noreferrer">Open evidence</a>}
+  return <div className="stack"><b>{d.title}</b>{d.evidence_url && <a href={d.evidence_url} target="_blank" rel="noreferrer">Open evidence link</a>}<FileChips deliverableId={d.id} />{d.note && <div className="mini">Note: {d.note}</div>}
     {d.target != null && <label className="f">Actual delivered ({d.uom || 'value'})<NumIn value={act} onChange={setAct} /></label>}
     <div className="row"><span className="mini">Quality</span>{[1, 2, 3, 4, 5].map(n => <button key={n} className={'btn sm' + (rt >= n ? ' pri' : '')} onClick={() => setRt(n)}>★</button>)}</div>
     <label className="f">Feedback<textarea rows={2} value={fb} onChange={e => setFb(e.target.value)} /></label>

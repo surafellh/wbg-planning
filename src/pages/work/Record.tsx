@@ -7,6 +7,7 @@ import { sb } from '../../lib/supabase';
 import { cutoffLabel, FY, monthStart, MONTHS, curMonth, qOfMonth, weekStart, weekLabel, ymd, cutoffOf, krState, currentPeriod, krTarget, monthlyValues, linesOf, planBy, actualBy, lineActual, lineVals, lineQty, sum, money, fmt, pct } from '../../lib/calc';
 import { HowItWorks, Seg, Empty, Pill, UnitPicker, Modal } from '../../lib/ui';
 import { Sheet, useDraft, type Col } from '../../lib/sheet';
+import { checkFiles, uploadFiles, FileChips, FILE_LIMITS, mb } from '../../lib/files';
 import { teamOf, WeekReview, TeamView, MonthView, CheckIns, Blockers } from '../Work';
 import { isHead, SaveBar, headedOrgs, useDetail, DetailToggle, PRI, orgOf, depOpts } from './Plan';
 
@@ -97,7 +98,7 @@ function MyDeliverables() {
   const cols: Col[] = [{ key: 'code', label: 'Ref', type: 'ro', width: 74 }, { key: 'title', label: t('deliverable'), type: 'ro', width: 240 }, { key: 'kind', label: 'Result type', type: 'ro', width: 110 }, { key: 'kr', label: t('key_result'), type: 'ro', width: 190 }, { key: 'due', label: 'Due', type: 'ro', width: 95 },
     { key: 'acts', label: 'Weekly tasks', type: 'ro', width: 110, fmt: (_, r) => { const a = db.activities.filter(x => x.deliverable_id === r.id); return a.length ? `${a.filter(x => x.status === 'Done').length} / ${a.length} done` : '—'; }, tip: 'Weekly activities linked to this deliverable.' },
     { key: 'target', label: 'Target', type: 'ro', width: 75 }, { key: 'actual', label: 'Achieved', type: 'number', width: 90, editable: open, tip: 'For target-based deliverables: the number reached.' }, { key: 'uom', label: 'Unit', type: 'ro', width: 60 }, { key: 'weight', label: 'Weight %', type: 'ro', width: 75 },
-    { key: 'evidence', label: 'Evidence link', type: 'text', width: 200, editable: open, tip: 'A link to the document, photo or file that shows it is done.' }, { key: 'note', label: 'Note', type: 'text', width: 180, editable: open },
+    { key: 'evidence', label: 'Evidence link', type: 'text', width: 200, editable: open, tip: 'A link to the document, photo or file that shows it is done.' }, { key: 'files', label: 'Files', type: 'ro', width: 170, tip: 'Evidence files attached when submitting — click one to view it.', fmt: (_: any, r: Row) => <FileChips deliverableId={r.id} canDelete={r.state !== 'accepted'} /> }, { key: 'note', label: 'Note', type: 'text', width: 180, editable: open },
     { key: 'state', label: 'Status', type: 'ro', width: 130, sticky: 'right', fmt: (v, r) => v === 'accepted' ? <Pill tone="good">Accepted</Pill> : v === 'done' ? <span className="row" style={{ gap: 4 }}><Pill tone="warn">Submitted</Pill><button className="btn xs" data-tip="Take it back before your manager reviews it" onClick={() => withdraw(r.id)}>↶</button></span> : <button className="btn sm pri" onClick={() => setSub(byId(db.deliverables, r.id)!)}>{v === 'returned' ? 'Resubmit' : 'Submit'}</button> }];
   async function withdraw(id: string) { await save(() => sb.from('deliverables').update({ status: 'planned', done_at: null }).eq('id', id), ['deliverables'], 'Submission withdrawn'); }
   const toSubmit = d.rows.filter(r => r.state === 'planned' || r.state === 'returned');
@@ -133,17 +134,29 @@ function BulkSubmit({ ids, onClose }: { ids: string[]; onClose: () => void }) {
     <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!pick.size} onClick={go}>Submit {pick.size || ''}</button></div></Modal>;
 }
 export function SubmitModal({ d, onClose }: { d: Row; onClose: () => void }) {
-  const { db, me } = useData(); const save = useSave(); const [ev, setEv] = useState(d.evidence_url || ''); const [note, setNote] = useState(d.note || ''); const [act, setAct] = useState<string>(d.actual != null ? String(d.actual) : '');
+  const { db, me, user, reload } = useData(); const save = useSave(); const [ev, setEv] = useState(d.evidence_url || ''); const [note, setNote] = useState(d.note || ''); const [act, setAct] = useState<string>(d.actual != null ? String(d.actual) : '');
+  const [files, setFiles] = useState<File[]>([]); const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const have = db ? db.deliverable_files.filter(f => f.deliverable_id === d.id) : [];
+  function pick(list: FileList | null) { if (!list || !db) return; const next = [...files, ...Array.from(list)]; setErr(checkFiles(db, d.id, user.id, next)); setFiles(next); }
   async function go() {
-    const ok = await save(() => sb.from('deliverables').update({ status: 'done', done_at: new Date().toISOString(), evidence_url: ev.trim() || null, note: note.trim() || null, actual: act === '' ? null : Number(act) }).eq('id', d.id), ['deliverables'], 'Submitted — your manager has been told');
-    if (ok && db && me) await notifyPositions(db, [managerOf(db, me)?.id], 'deliverable', `${me.holder_name} submitted “${d.title}” for acceptance`, '/record?tab=deliverables');
-    if (ok) onClose();
+    if (!db || !me) return; if (files.length) { const e = checkFiles(db, d.id, user.id, files); if (e) { setErr(e); return; } }
+    setBusy(true);
+    if (files.length) { const e = await uploadFiles(d, d.owner_position_id || me.id, files); if (e) { setErr(e); setBusy(false); await reload(['deliverable_files']); return; } }
+    const ok = await save(() => sb.from('deliverables').update({ status: 'done', done_at: new Date().toISOString(), evidence_url: ev.trim() || null, note: note.trim() || null, actual: act === '' ? null : Number(act) }).eq('id', d.id), ['deliverables', 'deliverable_files'], 'Submitted — your manager has been told');
+    if (ok) await notifyPositions(db, [managerOf(db, me)?.id], 'deliverable', `${me.holder_name} submitted “${d.title}” for acceptance`, '/record?tab=deliverables');
+    setBusy(false); if (ok) onClose();
   }
+  const room = FILE_LIMITS.perDeliverable - have.length;
   return <Modal title="Submit for acceptance" onClose={onClose}><p><b>{d.title}</b></p>
     {d.target != null && <label className="f">Achieved ({d.uom || 'value'}) — target {d.target}<input type="number" value={act} onChange={e => setAct(e.target.value)} /></label>}
-    <label className="f">Evidence link <span className="note">(document, photo or file that shows it is done)</span><input type="url" placeholder="https://…" value={ev} onChange={e => setEv(e.target.value)} /></label>
+    <div className="filepick"><b style={{ fontSize: 13 }}>Evidence files <span className="note">(up to 3 files, 5 MB in total; 15 MB per person per week)</span></b>
+      <FileChips deliverableId={d.id} canDelete />
+      {files.map((f, i) => <div key={i} className="row mini"><span style={{ flex: 1 }}>📎 {f.name} · {mb(f.size)}</span><button className="xdel" onClick={() => { const n = files.filter((_, k) => k !== i); setFiles(n); setErr(n.length && db ? checkFiles(db, d.id, user.id, n) : null); }}>×</button></div>)}
+      {room - files.length > 0 && <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.png,.jpg,.jpeg,.txt" onChange={e => { pick(e.target.files); e.target.value = ''; }} />}
+      {err && <div className="banner bad">{err}</div>}</div>
+    <label className="f">Or an evidence link <span className="note">(optional)</span><input type="url" placeholder="https://…" value={ev} onChange={e => setEv(e.target.value)} /></label>
     <label className="f">Note <span className="note">(optional)</span><textarea rows={2} value={note} onChange={e => setNote(e.target.value)} /></label>
-    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" onClick={go}>Submit</button></div></Modal>;
+    <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={busy || !!err} onClick={go}>{busy ? 'Uploading…' : 'Submit'}</button></div></Modal>;
 }
 
 const ENTER: Record<string, string> = { sum: "This month's amount only (the quarter adds the months up)", average: "This month's value (the quarter is the average)", latest: 'The level reached by the end of the month', max: "This month's value (the quarter takes the highest)", min: "This month's value (the quarter takes the lowest)" };

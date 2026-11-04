@@ -388,3 +388,10 @@ table.stepgrid td,table.phases td{padding:5px 8px;border-bottom:1px solid var(--
 table.stepgrid th.first,table.stepgrid td.first{width:auto}table.stepgrid th:last-child,table.stepgrid td.nowrap{width:64px}
 table.stepgrid .mini{font-weight:500}
 table.phases{table-layout:auto}table.phases th.first,table.phases td.first{min-width:180px}table.phases td.gc{padding:6px 0}
+
+.fchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}.fchip{display:inline-flex;align-items:center;gap:2px;background:var(--sunk);border:1px solid var(--line);border-radius:12px;padding:1px 8px;font-size:12px}
+.fview{min-height:300px;max-height:72vh;overflow:auto;margin-bottom:10px}.fview iframe{width:100%;height:68vh;border:1px solid var(--line);border-radius:8px;background:#fff}.fview img{max-width:100%}
+.fdoc{background:#fff;color:#111;padding:18px;border:1px solid var(--line);border-radius:8px}.fdoc table{border-collapse:collapse}.fdoc td,.fdoc th{border:1px solid #ddd;padding:3px 6px;font-size:12px}.fsheet{overflow:auto}
+.filepick{border:1px dashed var(--line2,#bbb);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.ghead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ghead b{font-size:13px}.ghead .mini{font-weight:500;flex:1}
+.hdr-row td .ghead{position:sticky;left:8px;max-width:calc(100vw - 330px);flex-wrap:nowrap}.hdr-row td .ghead .mini{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
