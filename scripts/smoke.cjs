@@ -52,7 +52,7 @@ const srv = http.createServer((req, res) => { let f = path.join(DIST, decodeURIC
     }
   }
   await page.evaluate(id => localStorage.setItem('wbg.unit', id), units[0].id);
-  await page.goto('http://localhost:4173/studio/okr'); await page.waitForTimeout(500); await page.getByRole('button', { name: '+ Key result' }).first().click(); await page.waitForTimeout(300);
+  await page.goto('http://localhost:4173/studio/okr'); await page.waitForTimeout(500); await page.locator('.morebtn').first().click(); await page.getByRole('menuitem', { name: '+ Key result' }).click(); await page.waitForTimeout(300);
   await page.getByRole('button', { name: 'By month' }).click(); await page.getByRole('button', { name: 'Ramp up' }).click().catch(()=>{}); await page.waitForTimeout(200); await page.screenshot({ path: path.join(ROOT, 'shots', 'kr-modal.png'), fullPage: false });
   await page.keyboard.press('Escape');
   await page.goto('http://localhost:4173/insights/performance'); await page.waitForTimeout(500); await page.locator('.orgn').nth(1).click(); await page.waitForTimeout(400); await page.screenshot({ path: path.join(ROOT, 'shots', 'org-drawer.png') });
