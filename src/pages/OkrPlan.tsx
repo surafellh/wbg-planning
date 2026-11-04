@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { krsOf, childObjectives, sum, fmt, pct, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds, ownShare, objScore, liveObj, type Period } from '../lib/calc';
-import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter } from '../lib/ui';
+import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter, MoreMenu } from '../lib/ui';
 import { Link } from 'react-router-dom';
 import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer, ensureUnitGoal, isFunctionUnit, groupGoalsOf } from './Goals';
 import { GoalModal } from './studio/Studio';
@@ -207,17 +207,16 @@ export default function OkrPlan() {
   const krW = (oid: string) => sum(krsOf(db, oid).map(k => Number(k.weight) || 0));
   const kidW = (oid: string) => sum(childObjectives(db, oid).map(c => Number(c.weight_to_parent) || 0));
   const issues = db.objectives.filter(o => o.unit_id === unit && ((krsOf(db, o.id).length && Math.round(krW(o.id)) !== 100) || (childObjectives(db, o.id).length && Math.round(kidW(o.id)) !== 100)));
-  const extra = (o: Row) => <div className="row">
-    {(o.state || 'active') !== 'active' && <Pill tone="warn">{o.state}</Pill>}
-    <button className="btn sm" data-tip="Pause: keep it but stop scoring it (e.g. focus changed). Resume any time." onClick={() => { const st = (o.state || 'active') === 'active' ? 'paused' : 'active'; const why = st === 'paused' ? prompt('Why is it paused?') : ''; if (st === 'paused' && !why) return; save(() => sb.from('objectives').update({ state: st, state_reason: why || null }).eq('id', o.id), ['objectives'], st === 'paused' ? 'Paused' : 'Resumed'); }}>{(o.state || 'active') === 'active' ? 'Pause' : 'Resume'}</button>
-    {krsOf(db, o.id).length > 0 && Math.round(krW(o.id)) !== 100 && <Pill tone="warn">KR weights {fmt(krW(o.id))}%</Pill>}
-    {childObjectives(db, o.id).length > 0 && Math.round(kidW(o.id)) !== 100 && <Pill tone="warn">cascade {fmt(kidW(o.id))}%</Pill>}
-    {krsOf(db, o.id).length > 0 && childObjectives(db, o.id).length > 0 && <span className={'ownshare' + (o.own_weight == null ? ' unset' : '')} data-tip="This objective has its own key results and objectives below it. Own share = how much of its score comes from its own key results; the rest comes from the objectives below. Set it for each objective.">Own KRs <input type="number" min={0} max={100} defaultValue={ownShare(db, o)} onBlur={e => { const v = Number(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100 && v !== Number(o.own_weight)) save(() => sb.from('objectives').update({ own_weight: v }).eq('id', o.id), ['objectives'], 'Own share saved'); }} />% · below {100 - ownShare(db, o)}%{o.own_weight == null && ' (default)'}</span>}
-    <button className="btn sm" onClick={() => setKm({ objective_id: o.id, owner_position_id: o.owner_position_id })}>+ Key result</button>
-    <button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: o.org_unit_id, parent_objective_id: o.id, owner_position_id: null })}>+ Below</button>
-    <button className="btn sm" onClick={() => setOm(o)}>Edit</button>
-    <button className="btn sm danger" onClick={() => { if (confirm('Delete this objective and its key results?')) save(() => sb.from('objectives').delete().eq('id', o.id), ['objectives', 'key_results'], 'Deleted'); }}>Delete</button>
-  </div>;
+  const extra = (o: Row) => { const paused = (o.state || 'active') !== 'active'; const both = krsOf(db, o.id).length > 0 && childObjectives(db, o.id).length > 0;
+    return <div className="row" style={{ gap: 4 }}>{paused && <Pill tone="warn">{o.state}</Pill>}
+      <MoreMenu items={[
+        { label: '+ Key result', onClick: () => setKm({ objective_id: o.id, owner_position_id: o.owner_position_id }) },
+        { label: '+ Objective below', tip: 'Cascade: a department or division objective that delivers this one', onClick: () => setOm({ unit_id: unit, org_unit_id: o.org_unit_id, parent_objective_id: o.id, owner_position_id: null }) },
+        { label: 'Edit', onClick: () => setOm(o) },
+        { label: `Own key results share (${ownShare(db, o)}%)…`, hidden: !both, tip: 'How much of the score comes from its own key results; the rest from the objectives below', onClick: () => { const v = prompt('Share of the score from its own key results (0–100). The rest comes from the objectives below.', String(ownShare(db, o))); const n = v == null ? NaN : Number(v); if (!isNaN(n) && n >= 0 && n <= 100) save(() => sb.from('objectives').update({ own_weight: n }).eq('id', o.id), ['objectives'], 'Share saved'); } },
+        { label: paused ? 'Resume' : 'Pause', tip: 'Pause: keep it but stop scoring it. Resume any time.', onClick: () => { const st = paused ? 'active' : 'paused'; const why = st === 'paused' ? prompt('Why is it paused?') : ''; if (st === 'paused' && !why) return; save(() => sb.from('objectives').update({ state: st, state_reason: why || null }).eq('id', o.id), ['objectives'], st === 'paused' ? 'Paused' : 'Resumed'); } },
+        { label: 'Delete', danger: true, onClick: () => { if (confirm('Delete this objective and its key results?')) save(() => sb.from('objectives').delete().eq('id', o.id), ['objectives', 'key_results'], 'Deleted'); } },
+      ]} /></div>; };
   return <Page title="Objective planner" desc="Set the year's objectives from the strategic goals, cascade them, and weight them." help={<>
     <h3>How OKR planning works</h3><ol><li><b>Start from a strategic goal.</b> A unit objective always delivers one of the unit's own strategic goals; choosing the goal sets the pillar.</li>
       <li><b>Add key results</b> (2–5 per objective). Say how each is measured: from the annual plan (revenue, quantity or spending of chosen product groups or budget lines), from deliverables, from the objectives below, or checked in with evidence. Weights inside an objective add up to 100%.</li>

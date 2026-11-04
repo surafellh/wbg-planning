@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { Targets } from './work/Plan';
 import { useData, useSave, byId, posName, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
-import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, weighted, subtreeIds, unitOfObjective, krDrivers, type Period } from '../lib/calc';
-import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter, NumIn, ViewTabs } from '../lib/ui';
+import { krState, objScore, objState, krsOf, childObjectives, fmt, pct, MONTHS, periodLabel, periodMonths, krTarget, krActual, monthlyValues, curMonth, qOfMonth, AGG_NAME, DIR_NAME, currentPeriod, orgScore, avg, weighted, subtreeIds, unitOfObjective, krDrivers, ownShare, liveObj, type Period } from '../lib/calc';
+import { Page, Cmd, Ring, Bar, Pill, Drawer, Empty, Seg, PeriodPicker, usePeriod, StatusStack, Modal, StatePill, OrgFilter, NumIn, ViewTabs, WeightSplit, splitColor, MoreMenu } from '../lib/ui';
 
 export const MEASURE: Record<string, [string, string]> = { plan: ['₿', 'From the annual plan'], deliverables: ['✓', 'From deliverables'], children: ['↳', 'From the objectives below'], manual: ['✎', 'Checked in with evidence'] };
 const LVL: Record<string, string> = { unit: 'Unit', department: 'Department', division: 'Division' };
@@ -63,12 +63,12 @@ export function statusCounts(db: DB, krs: Row[], p: Period) {
 }
 export const unitKrs = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && o.status !== 'Archived').flatMap(o => krsOf(db, o.id));
 
-export function KrRow({ k, p, onOpen }: { k: Row; p: Period; onOpen: (id: string) => void }) {
+export function KrRow({ k, p, onOpen, color }: { k: Row; p: Period; onOpen: (id: string) => void; color?: string }) {
   const { db } = useData(); if (!db) return null;
   const s = krState(db, k, p);
   return <div className="kr" onClick={() => onOpen(k.id)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') onOpen(k.id); }}>
     <span className="ms" title={MEASURE[k.measure]?.[1]}>{MEASURE[k.measure]?.[0]}</span>
-    <span>{k.title}<span className="note"> · {posName(db, k.owner_position_id)}</span></span>
+    <span>{color && <i className="kdot" style={{ background: color }} />}{k.title}<span className="note"> · {posName(db, k.owner_position_id)}</span></span>
     <span className="note hide-s" title={`${periodLabel(p)} target and actual`}>{s.actual != null || s.target != null ? `${fmt(s.actual, 1)} / ${fmt(s.target, 1)} ${k.measure === 'deliverables' ? 'weight' : k.uom || ''}` : ''}</span>
     <span className="hide-s"><Bar p={s.progress} /></span>
     <span className="hide-s"><StatePill s={s} /></span>
@@ -76,17 +76,21 @@ export function KrRow({ k, p, onOpen }: { k: Row; p: Period; onOpen: (id: string
   </div>;
 }
 
+export function WeightChip({ w, of }: { w: number; of: string }) { return <span className="wchip" data-tip={`Carries ${fmt(w)}% of ${of}`}><i><b style={{ width: Math.min(100, w) + '%' }} /></i>{fmt(w)}% of {of}</span>; }
 export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; onKr: (id: string) => void; depth?: number; extra?: (o: Row) => React.ReactNode }) {
   const { db } = useData(); const [open, setOpen] = useState(depth < 1); if (!db) return null;
   const ks = krsOf(db, o.id); const kids = childObjectives(db, o.id).concat(db.objectives.filter(c => c.parent_kr_id && c.status !== 'Archived' && ks.some(k => k.id === c.parent_kr_id)));
-  const org = byId(db.org_units, o.org_unit_id); const st = objState(db, o, p);
+  const org = byId(db.org_units, o.org_unit_id); const st = objState(db, o, p); const below = o.parent_objective_id || o.parent_kr_id;
+  const own = ks.length && kids.length ? ownShare(db, o) : null;
   return <div className="obj">
     <div className="objh"><Ring p={objScore(db, o, p)} size={40} />
-      <div className="ot">{o.text}<div className="om"><span className="lvl">{LVL[o.level]}</span> {org?.name} · {posName(db, o.owner_position_id)}{o.weight_to_parent != null && (o.parent_objective_id || o.parent_kr_id) ? ` · weight ${fmt(Number(o.weight_to_parent))}%` : ''} · {o.status}{/Link to check/.test(o.review_note || '') && <> <span className="pill warn" data-tip={o.review_note}>link to check</span></>}{/^Split from ERP OKR/.test(o.review_note || '') && <span className="mini" data-tip={o.review_note}> · from a multi-objective ERP OKR</span>}</div></div>
+      <div className="ot">{o.text}<div className="om"><span className="lvl">{LVL[o.level]}</span> {org?.name} · {posName(db, o.owner_position_id)} · {o.status}{o.weight_to_parent != null && below ? <> · <WeightChip w={Number(o.weight_to_parent)} of={o.parent_kr_id ? 'the key result above' : 'the objective above'} /></> : null}{/Link to check/.test(o.review_note || '') && <> <span className="pill warn" data-tip={o.review_note}>link to check</span></>}</div></div>
       <StatePill s={st} />{extra?.(o)}
     </div>
-    <div className="krl">{ks.map(k => <KrRow key={k.id} k={k} p={p} onOpen={onKr} />)}{!ks.length && !kids.length && <p className="note">No key results yet.</p>}</div>
-    {kids.length > 0 && <div style={{ marginTop: 6 }}><button className="linkbtn" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show'} {kids.length} objective{kids.length > 1 ? 's' : ''} below</button>
+    {own != null && <div className="mini" style={{ margin: '6px 0 0 50px' }}>Score = <b>{own}%</b> own key results + <b>{100 - own}%</b> objectives below</div>}
+    {ks.length > 1 && <div style={{ marginLeft: 50 }}><WeightSplit label="Key results" parts={ks.map(k => ({ name: k.title, w: k.weight }))} /></div>}
+    <div className="krl">{ks.map((k, i) => <KrRow key={k.id} k={k} p={p} onOpen={onKr} color={ks.length > 1 ? splitColor(i) : undefined} />)}{!ks.length && !kids.length && <p className="note">No key results yet.</p>}</div>
+    {kids.length > 0 && <div style={{ marginTop: 6 }}><div className="row" style={{ gap: 10 }}><button className="linkbtn" onClick={() => setOpen(!open)}>{open ? '▾ Hide' : '▸ Show'} {kids.length} objective{kids.length > 1 ? 's' : ''} below</button>{kids.length > 1 && <div style={{ flex: 1 }}><WeightSplit compact label="split" parts={kids.map(c => ({ name: c.text, w: c.weight_to_parent }))} /></div>}</div>
       {open && <div className="kids">{kids.map(c => <ObjCard key={c.id} o={c} p={p} onKr={onKr} depth={depth + 1} extra={extra} />)}</div>}</div>}
   </div>;
 }
@@ -271,50 +275,75 @@ export function GoalsQuarter() {
   </Page>;
 }
 
+/** Suggested unit shares of a Group goal, from the work each unit has planned for it:
+    2 points per objective and 1 per key result under the unit goals that serve it (all cascade levels);
+    business units count 1.5× on growth, revenue, profit, capital, market and customer goals. */
+export function suggestShares(db: DB, groupGoalId: string) {
+  const gg = byId(db.group_goals, groupGoalId); const pil = gg && byId(db.group_pillars, gg.pillar_id);
+  const growth = /revenue|profit|growth|capital|invest|market|customer|financ/i.test(`${gg?.name || ''} ${pil?.name || ''}`);
+  const ugs = db.unit_goals.filter(u => u.group_goal_id === groupGoalId); const units = Array.from(new Set(ugs.map(u => u.unit_id)));
+  const objsUnder = (ids: string[]) => { const out: Row[] = []; let frontier = db.objectives.filter(o => ids.includes(o.unit_goal_id) && liveObj(o) && o.level !== 'individual'); const seen = new Set<string>();
+    while (frontier.length) { const next: Row[] = []; frontier.forEach(o => { if (seen.has(o.id)) return; seen.add(o.id); out.push(o); const ks = new Set(krsOf(db, o.id).map(k => k.id)); db.objectives.forEach(c => { if (liveObj(c) && c.level !== 'individual' && (c.parent_objective_id === o.id || (c.parent_kr_id && ks.has(c.parent_kr_id)))) next.push(c); }); }); frontier = next; }
+    return out; };
+  const raw = units.map(uid => { const os = objsUnder(ugs.filter(u => u.unit_id === uid).map(u => u.id)); const kr = os.reduce((a, o) => a + krsOf(db, o.id).length, 0); const biz = byId(db.org_units, uid)?.unit_type === 'business';
+    const score = Math.max(1, os.length * 2 + kr) * (growth && biz ? 1.5 : 1); return { uid, score, why: `${os.length} objectives, ${kr} key results${growth && biz ? ' · business unit on a growth goal ×1.5' : ''}` }; });
+  const tot = raw.reduce((a, r) => a + r.score, 0) || 1; const exact = raw.map(r => r.score * 100 / tot); const fl = exact.map(Math.floor); let left = 100 - fl.reduce((a, b) => a + b, 0);
+  exact.map((v, k) => [v - fl[k], k] as [number, number]).sort((a, b) => b[0] - a[0]).forEach(([, k]) => { if (left > 0) { fl[k]++; left--; } });
+  return raw.map((r, k) => ({ ...r, share: fl[k] }));
+}
+
 export function GroupView() {
-  const { db, setUnit, can } = useData(); const save = useSave(); const [p, setP] = usePeriod(); if (!db) return null;
-  const edit = can('approve');
+  const { db, setUnit, can } = useData(); const save = useSave(); const [p, setP] = usePeriod(); const [edit, setEdit] = useState(false); const [openP, setOpenP] = useState<string | null>(null); const [openG, setOpenG] = useState<string | null>(null); const [sug, setSug] = useState<Record<string, ReturnType<typeof suggestShares>>>({});
+  if (!db) return null;
+  const mayEdit = can('approve');
   const pillars = db.group_pillars.slice().sort((a, b) => a.sort - b.sort); const st = db.strategy_statements.find(s => s.unit_id === db.org_units.find(x => x.kind === 'group')?.id);
   const ps = pillarShares(db);
   const gScore = (g: Row) => { const cs = contribShares(db, g.id); return weighted(Array.from(cs.entries()).map(([u, w]) => [w, goalScore(db, u.id, p)])); };
   const pScore = (pil: Row) => { const gs = goalShares(db, pil.id); return weighted(groupGoalsOf(db, pil.id).filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).map(g => [gs.get(g) || 0, gScore(g)])); };
   const put = (table: string, id: string, field: string, v: number | null) => save(() => sb.from(table).update({ [field]: v }).eq('id', id), [table], 'Weight saved');
-  const sumSet = (rows: Row[], f: string) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
-  const Total = ({ rows, f, what }: { rows: Row[]; f: string; what: string }) => { const set = rows.filter(r => r[f] != null); const t = sumSet(rows, f);
-    return !set.length ? <span className="mini">{what}: equal shares (none set)</span> : <span className="mini">{what}: entered {fmt(t, 2)}%{set.length < rows.length ? ` · ${rows.length - set.length} not set share the rest` : ''} {set.length === rows.length && Math.round(t) !== 100 ? <Pill tone="warn">not 100% — shares are scaled</Pill> : Math.round(t) === 100 ? <Pill tone="good">100%</Pill> : null}</span>; };
+  const unitShares = (g: Row) => { const cs = contribShares(db, g.id); const m = new Map<string, number>(); cs.forEach((v, u) => m.set(u.unit_id, (m.get(u.unit_id) || 0) + v)); return Array.from(m.entries()).sort((a, b) => b[1] - a[1]); };
+  const setUnitShare = (g: Row, uid: string, v: number | null) => { const mine = db.unit_goals.filter(u => u.group_goal_id === g.id && u.unit_id === uid);
+    return save(async () => { for (const u of mine) { const r = await sb.from('unit_goals').update({ contribution: v == null ? null : v / mine.length }).eq('id', u.id); if (r.error) return r; } return { error: null }; }, ['unit_goals'], 'Share saved'); };
+  async function applySuggestion(g: Row) { const sg = sug[g.id] || suggestShares(db!, g.id);
+    await save(async () => { for (const x of sg) { const mine = db!.unit_goals.filter(u => u.group_goal_id === g.id && u.unit_id === x.uid); for (const u of mine) { const r = await sb.from('unit_goals').update({ contribution: x.share / mine.length }).eq('id', u.id); if (r.error) return r; } } return { error: null }; }, ['unit_goals'], 'Suggested shares applied');
+    setSug(s0 => { const n = { ...s0 }; delete n[g.id]; return n; }); }
+  async function applyAll() { if (!confirm('Set every Group goal\'s unit shares to the suggested values? Shares you set by hand are replaced.')) return;
+    await save(async () => { for (const g of db!.group_goals) { const sg = suggestShares(db!, g.id); if (sg.length < 2) continue; for (const x of sg) { const mine = db!.unit_goals.filter(u => u.group_goal_id === g.id && u.unit_id === x.uid); for (const u of mine) { const r = await sb.from('unit_goals').update({ contribution: x.share / mine.length }).eq('id', u.id); if (r.error) return r; } } } return { error: null }; }, ['unit_goals'], 'Suggested shares applied to all goals'); }
   const { byUnit, served } = unitStrategyShares(db);
   const units = db.org_units.filter(u => u.kind === 'unit' && u.active !== false);
-  const cat = (u: Row) => u.unit_type === 'business' ? 'Business units' : 'Corporate functions';
-  return <Page title="Group view" desc="Group pillars and goals, the units that serve them, how much each contributes, and how they are doing." help={<>
-    <p><b>Weights.</b> Each pillar has a share of the Group strategy; the goals in a pillar share it (they add up to 100%); and the units serving a Group goal share that goal (they add up to 100%). A weight left empty takes an equal share of what the set weights leave. Scores roll up with these weights.</p>
-    <p><b>Contribution to the Group strategy</b> = pillar share × goal share × the unit's share of the goal, added over every goal the unit serves. It adds up to 100% over the goals that are served.</p>
-    <p><b>Categories.</b> Business units plan their own pillars and goals, each linked to a Group goal. Corporate functions link their objectives straight to the Group goals.</p>
-    <p>Links marked "to confirm" were proposed from the strategy documents. A Group goal no unit serves is flagged.</p></>}>
-    <div className="cmdbar">{edit && <span className="note">You can edit the weights: type a number and leave the box.</span>}<span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
-    {st && <div className="ident" style={{ marginBottom: 14 }}><div className="card"><h4>Group vision</h4><div className="big">{st.vision}</div></div><div className="card"><h4>Group mission</h4><div>{st.mission}</div></div></div>}
-    <div className="pilgrid" style={{ marginBottom: 6 }}>{pillars.map(pil => { const gs = groupGoalsOf(db, pil.id); return <div key={pil.id} className="pilcard"><div className="ph"><Ring p={pScore(pil)} size={42} /><b>{pil.code} · {pil.name}</b></div>
-      <div className="row"><span className="mini" style={{ flex: 1 }}>{gs.length} goals · {gs.filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).length} served</span><span className="mini">share of the strategy</span>{edit ? <NumIn w={64} value={pil.weight} onChange={v => put('group_pillars', pil.id, 'weight', v)} /> : null}<b>{fmt(ps.get(pil) || 0, 1)}%</b></div></div>; })}</div>
-    <p style={{ marginBottom: 14 }}><Total rows={pillars} f="weight" what="Pillar weights" /></p>
-    {pillars.map(pil => { const gs = groupGoalsOf(db, pil.id); const gsh = goalShares(db, pil.id); return <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name} · {fmt(ps.get(pil) || 0, 1)}% of the Group strategy</div>
-      <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Group goal</th><th className="n">Share of pillar</th><th>Served by · share of the goal</th><th>{periodLabel(p)}</th></tr></thead><tbody>
-        {gs.map(g => { const ugs = db.unit_goals.filter(u => u.group_goal_id === g.id); const cs = contribShares(db, g.id);
-          return <tr key={g.id}><td style={{ width: '28%' }}>{g.code} {g.name}</td>
-            <td className="n" style={{ whiteSpace: 'nowrap' }}>{edit && <NumIn w={58} value={g.weight} onChange={v => put('group_goals', g.id, 'weight', v)} />} <b>{fmt(gsh.get(g) || 0, 1)}%</b></td>
-            <td>{ugs.length ? <>{Array.from(new Set(ugs.map(u => u.unit_id))).map(uid => { const mine = ugs.filter(u => u.unit_id === uid); const sh = mine.reduce((a, u) => a + (cs.get(u) || 0), 0);
-              const val = mine.every(u => u.contribution != null) ? mine.reduce((a, u) => a + Number(u.contribution), 0) : null;
-              const setV = (v: number | null) => save(async () => { for (const u of mine) { const r = await sb.from('unit_goals').update({ contribution: v == null ? null : v / mine.length }).eq('id', u.id); if (r.error) return r; } return { error: null }; }, ['unit_goals'], 'Contribution saved');
-              return <div key={uid} className="contrib">
-              <span className="cw">{edit && <NumIn w={54} value={val == null ? null : Math.round(val * 100) / 100} onChange={setV} />}<b>{fmt(sh, 1)}%</b></span>
-              <span className="cbar"><i style={{ width: sh + '%' }} /></span>
-              <span className="cname"><Link to="/insights/map" onClick={() => setUnit(uid)}>{byId(db.org_units, uid)?.name}</Link>
-                {mine.map(u => <div key={u.id} className="mini">{u.name}{!u.link_confirmed && <> <Pill tone="warn">to confirm</Pill></>} · {pct(goalScore(db, u.id, p))}</div>)}</span></div>; })}
-              {new Set(ugs.map(u => u.unit_id)).size > 1 && <Total rows={Array.from(new Set(ugs.map(u => u.unit_id))).map(uid => { const m = ugs.filter(u => u.unit_id === uid); return { contribution: m.some(u => u.contribution != null) ? m.reduce((a, u) => a + (Number(u.contribution) || 0), 0) : null }; })} f="contribution" what="Unit shares" />}</> : <Pill tone="bad">No unit serving it</Pill>}</td>
-            <td><Bar p={gScore(g)} /></td></tr>; })}
-      </tbody></table></div><p style={{ margin: '4px 0 0' }}><Total rows={gs} f="weight" what="Goal weights in this pillar" /></p></section>; })}
-    <section className="pil"><div className="pilh">Contribution of each unit to the Group strategy</div>
-      <p className="note" style={{ margin: '8px 0' }}>Pillar share × goal share × unit share of the goal, added over the goals each unit serves. {served < 99.5 ? `Goals no unit serves hold ${fmt(100 - served, 1)}% of the strategy; the shares below are of the ${fmt(served, 1)}% that is served, scaled to 100%.` : ''}</p>
+  const uname = (id: string) => byId(db.org_units, id)?.name || '';
+  return <Page title="Group view" desc="The Group strategy: pillars, goals, the units serving each goal and how much each contributes." help={<>
+    <p><b>How the weights work.</b> Each pillar has a share of the Group strategy. The goals in a pillar share that pillar (100%). The units serving a goal share that goal (100%). A weight left empty takes an equal share of what is left. Scores roll up with these weights.</p>
+    <p><b>Suggested shares</b> come from the work each unit planned for the goal: 2 points per objective and 1 per key result under the unit goals that serve it, at every cascade level; business units count 1.5× on growth, revenue, profit, capital, market and customer goals. Review and apply them, or type your own.</p>
+    <p><b>Contribution to the Group strategy</b> = pillar share × goal share × unit share of the goal, added over the goals a unit serves.</p></>}>
+    <div className="cmdbar">{mayEdit && <Seg value={edit ? 'e' : 'v'} options={[['v', 'View'], ['e', 'Edit weights']]} onChange={v => setEdit(v === 'e')} />}{edit && <button className="btn sm" onClick={applyAll} data-tip="Apply the suggested unit shares to every Group goal served by more than one unit">Apply suggested shares to all goals</button>}<span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
+    {st && <div className="card gvid"><div><h4>Vision</h4><b>{st.vision}</b></div><div><h4>Mission</h4><span className="mini">{st.mission}</span></div></div>}
+    <div className="pilgrid" style={{ margin: '12px 0' }}>{pillars.map(pil => { const gs = groupGoalsOf(db, pil.id); const sv = gs.filter(g => db.unit_goals.some(u => u.group_goal_id === g.id)).length;
+      return <button key={pil.id} className={'pilcard pilbtn' + (openP === pil.id ? ' on' : '')} onClick={() => setOpenP(openP === pil.id ? null : pil.id)}><div className="ph"><Ring p={pScore(pil)} size={42} /><b>{pil.code} · {pil.name}</b></div>
+        <div className="row"><span className="mini" style={{ flex: 1 }}>{gs.length} goals · {sv} served{sv < gs.length ? <span style={{ color: 'var(--bad)' }}> · {gs.length - sv} not served</span> : ''}</span>{edit ? <span onClick={e => e.stopPropagation()}><NumIn w={56} value={pil.weight} onChange={v => put('group_pillars', pil.id, 'weight', v)} /></span> : null}<b>{fmt(ps.get(pil) || 0, 1)}%</b></div></button>; })}</div>
+    {edit && <WeightSplit label="Pillars in the strategy" parts={pillars.map(x => ({ name: `${x.code} ${x.name}`, w: x.weight }))} />}
+    {!openP && <p className="note" style={{ margin: '10px 0' }}>Click a pillar to see its goals and the units serving them.</p>}
+    {pillars.filter(pil => pil.id === openP).map(pil => { const gs = groupGoalsOf(db, pil.id); const gsh = goalShares(db, pil.id); return <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name} <small>{fmt(ps.get(pil) || 0, 1)}% of the Group strategy</small></div>
+      {gs.length > 1 && <WeightSplit label="Goals in the pillar" parts={gs.map(g => ({ name: `${g.code} ${g.name}`, w: g.weight }))} />}
+      <div className="gvlist">{gs.map((g, gi) => { const us = unitShares(g); const isOpen = openG === g.id; const sg = sug[g.id];
+        return <div key={g.id} className={'gvrow' + (isOpen ? ' open' : '')}>
+          <div className="gvhead" onClick={() => setOpenG(isOpen ? null : g.id)}><span className="mini">{isOpen ? '▾' : '▸'}</span><i className="kdot" style={{ background: splitColor(gi) }} /><span style={{ flex: 1 }}><b>{g.code}</b> {g.name}</span>
+            {edit ? <span onClick={e => e.stopPropagation()}><NumIn w={56} value={g.weight} onChange={v => put('group_goals', g.id, 'weight', v)} /></span> : null}<span className="wchip" data-tip="Share of the pillar">{fmt(gsh.get(g) || 0, 1)}%</span>
+            {us.length ? <span className="gvunits">{us.slice(0, 4).map(([uid, v]) => <span key={uid} className="uchip">{uname(uid)} <b>{Math.round(v)}%</b></span>)}{us.length > 4 && <span className="mini">+{us.length - 4}</span>}</span> : <Pill tone="bad">No unit serving it</Pill>}
+            <span style={{ width: 90 }}><Bar p={gScore(g)} /></span></div>
+          {isOpen && <div className="gvbody">{us.length > 1 && <WeightSplit label="Units serving it" parts={us.map(([uid, v]) => ({ name: uname(uid), w: v }))} />}
+            {us.map(([uid, v]) => { const mine = db.unit_goals.filter(u => u.group_goal_id === g.id && u.unit_id === uid); const val = mine.every(u => u.contribution != null) ? mine.reduce((a, u) => a + Number(u.contribution), 0) : null; const sgu = sg?.find(x => x.uid === uid);
+              return <div key={uid} className="gvunit"><span style={{ width: 210 }}><Link to="/insights/map" onClick={() => setUnit(uid)}><b>{uname(uid)}</b></Link><div className="mini">{byId(db.org_units, uid)?.unit_type === 'business' ? 'Business unit' : 'Corporate function'}</div></span>
+                <span style={{ flex: 1 }}>{mine.map(u => <div key={u.id} className="mini">{u.name}{!u.link_confirmed && <> <Pill tone="warn">to confirm</Pill></>} · score {pct(goalScore(db, u.id, p))}</div>)}</span>
+                {edit && <NumIn w={60} value={val == null ? null : Math.round(val * 100) / 100} onChange={x => setUnitShare(g, uid, x)} />}<b style={{ width: 52, textAlign: 'right' }}>{Math.round(v)}%</b>
+                {sgu && <span className="sugg" data-tip={sgu.why}>suggested {sgu.share}%</span>}</div>; })}
+            {edit && us.length > 1 && <div className="row" style={{ marginTop: 6 }}>{!sg ? <button className="btn sm" onClick={() => setSug({ ...sug, [g.id]: suggestShares(db, g.id) })}>Suggest shares from the planned work</button> : <><button className="btn sm pri" onClick={() => applySuggestion(g)}>Apply suggested shares</button><button className="btn sm" onClick={() => setSug(s0 => { const n = { ...s0 }; delete n[g.id]; return n; })}>Dismiss</button><span className="note">Based on each unit's objectives and key results for this goal — hover a suggestion for the detail.</span></>}</div>}
+          </div>}
+        </div>; })}</div></section>; })}
+    <section className="pil" style={{ marginTop: 18 }}><div className="pilh">Contribution of each unit to the Group strategy</div>
+      <p className="note" style={{ margin: '8px 0' }}>Pillar share × goal share × unit share of the goal, added over the goals each unit serves.{served < 99.5 ? ` Goals no unit serves hold ${fmt(100 - served, 1)}% of the strategy; the shares are of the ${fmt(served, 1)}% that is served.` : ''}</p>
       <div className="tw"><table className="t"><thead><tr><th>Unit</th><th>Category</th><th className="n">Group goals served</th><th className="n">Contribution</th><th style={{ width: '30%' }} /></tr></thead><tbody>
-        {['Business units', 'Corporate functions'].map(c => { const rows = units.filter(u => cat(u) === c).map(u => ({ u, v: served ? (byUnit.get(u.id) || 0) * 100 / served : 0, n: new Set(db.unit_goals.filter(g => g.unit_id === u.id && g.group_goal_id).map(g => g.group_goal_id)).size })).sort((a, b) => b.v - a.v);
+        {['Business units', 'Corporate functions'].map(c => { const rows = units.filter(u => (u.unit_type === 'business' ? 'Business units' : 'Corporate functions') === c).map(u => ({ u, v: served ? (byUnit.get(u.id) || 0) * 100 / served : 0, n: new Set(db.unit_goals.filter(g => g.unit_id === u.id && g.group_goal_id).map(g => g.group_goal_id)).size })).sort((a, b) => b.v - a.v);
           const tot = rows.reduce((a, r) => a + r.v, 0);
           return [<tr key={c} className="g"><td colSpan={3}><b>{c}</b></td><td className="n"><b>{fmt(tot, 1)}%</b></td><td /></tr>,
             ...rows.map(({ u, v, n }) => <tr key={u.id}><td className="ind"><Link to="/insights/map" onClick={() => setUnit(u.id)}>{u.name}</Link></td>
@@ -322,7 +351,6 @@ export function GroupView() {
               <td className="n">{n || '—'}</td><td className="n">{v ? fmt(v, 1) + '%' : '—'}</td><td><span className="cbar"><i style={{ width: v + '%' }} /></span></td></tr>)]; })}
         <tr className="g"><td colSpan={3}><b>Total</b></td><td className="n"><b>{served ? '100%' : '—'}</b></td><td /></tr>
       </tbody></table></div></section>
-    <p className="note">Months {MONTHS.join(' · ')} start on the Ethiopian month. Period months: {periodMonths(p).map(x => MONTHS[x - 1]).join(', ')}.</p>
   </Page>;
 }
 
