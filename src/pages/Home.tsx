@@ -71,7 +71,7 @@ export function Financial({ db, units, label }: { db: DB; units: string[]; label
 
 export function Operational({ db, unit, p }: { db: DB; unit: string; p: Period }) {
   const krs = unitKrs(db, unit); const ids = subtreeIds(db, unit); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id));
-  const wk = ymd(weekStart(new Date())); const ws = workStats(db, pos, wk); const dm = delivScore(db, pos, { t: 'M', n: curMonth() });
+  const wk = ymd(weekStart(new Date())); const ws = workStats(db, pos, wk); const dm = delivScore(db, pos, p);
   const trend = Array.from({ length: curMonth() }, (_, i) => orgScore(db, unit, { t: 'M', n: i + 1 }));
   const behind = krs.map(k => ({ k, s: krState(db, k, p) })).filter(x => x.s.tone === 'bad').sort((a, b) => (a.s.ratio ?? 0) - (b.s.ratio ?? 0)).slice(0, 6);
   const nav = useNavigate();
@@ -80,7 +80,7 @@ export function Operational({ db, unit, p }: { db: DB; unit: string; p: Period }
       <div className="tile click" onClick={() => nav('/insights/performance')}><div className="row"><Ring p={orgScore(db, unit, p)} size={50} /><div><div className="tl">OKR score · {periodLabel(p)}</div><div className="ts">{db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived').length} objectives</div></div></div></div>
       <div className="tile" style={{ gridColumn: 'span 2' }}><div className="tl" style={{ marginBottom: 6 }}>Key results · {periodLabel(p)} (pace-adjusted)</div><StatusStack counts={statusCounts(db, krs, p)} /></div>
       <div className="tile click" onClick={() => nav('/week')}><div className="tv">{pct(ws.completion)}</div><div className="tl">This week's work done</div><div className="ts">{ws.done}/{ws.total} activities · {ws.stuck} stuck</div></div>
-      <div className="tile click" onClick={() => nav('/deliverables')}><div className="tv">{dm.due ? `${dm.accepted}/${dm.due}` : '—'}</div><div className="tl">{MONTHS[curMonth() - 1]} deliverables accepted</div><div className="ts">{dm.done} waiting for acceptance</div></div>
+      <div className="tile click" onClick={() => nav('/deliverables')}><div className="tv">{dm.due ? `${dm.accepted}/${dm.due}` : '—'}</div><div className="tl">Deliverables accepted · {periodLabel(p)}</div><div className="ts">{dm.done} waiting for acceptance</div></div>
     </div>
     <div className="drill"><div><h4>OKR score by month</h4><LineChart labels={MONTHS.slice(0, curMonth())} series={[{ name: 'Score', values: trend.map(v => v == null ? null : v * 100), color: 'var(--accent)' }]} fmtY={v => Math.round(v) + '%'} height={150} /></div>
       <div><h4>Off track — {periodLabel(p)}</h4>{behind.length ? behind.map(({ k, s }) => <div key={k.id} className="lg row"><span style={{ flex: 1 }}>{k.title}<div className="mini">{byId(db.objectives, k.objective_id)?.text}</div></span><Bar p={s.progress} /><StatePill s={s} /></div>) : <p className="note">Nothing off track.</p>}</div></div>
@@ -93,7 +93,7 @@ function ByDepartment({ db, unit, p }: { db: DB; unit: string; p: Period }) {
   const [show, setShow] = useState(false); const { open, tg } = useOpen(); const kids = orgKids(db, unit); if (!kids.length) return null; const wk = ymd(weekStart(new Date()));
   return <div style={{ marginTop: 10 }}><button className="btn sm" onClick={() => setShow(!show)}>{show ? '▾ Hide departments' : `▸ By department (${kids.length})`}</button>
     {show && <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Department · division</th><th>OKR score</th><th>Key results</th><th>Deliverables · {MONTHS[curMonth() - 1]}</th><th>This week's work</th></tr></thead><tbody>
-      <OrgRows db={db} ids={kids.map(k => k.id)} open={open} tg={tg} depth={0} sub={o => o.kind} cells={o => { const ids = subtreeIds(db, o.id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id)); const sc = rowScore(db, o.id, p); const krs = subtreeKrs(db, o.id); const dm = delivScore(db, pos, { t: 'M', n: curMonth() }); const ws = workStats(db, pos, wk);
+      <OrgRows db={db} ids={kids.map(k => k.id)} open={open} tg={tg} depth={0} sub={o => o.kind} cells={o => { const ids = subtreeIds(db, o.id); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id)); const sc = rowScore(db, o.id, p); const krs = subtreeKrs(db, o.id); const dm = delivScore(db, pos, p); const ws = workStats(db, pos, wk);
         return <><td>{sc == null ? <span className="mini">no objectives of its own</span> : <><Bar p={sc} /> {pct(sc)}</>}</td><td style={{ minWidth: 200 }}>{krs.length ? <StatusStack counts={statusCounts(db, krs, p)} compact /> : <span className="mini">—</span>}</td><td>{dm.due ? `${dm.accepted}/${dm.due}` : '—'}</td><td>{ws.total ? `${pct(ws.completion)} · ${ws.people} people` : <span className="note">none logged</span>}</td></>; }} />
     </tbody></table></div>}</div>;
 }

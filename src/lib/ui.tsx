@@ -89,8 +89,9 @@ export function usePeriod(def: PT = 'Q'): [Period, (p: Period) => void] {
 export function PeriodPicker({ value, onChange, types = ['M', 'Q', 'H', 'Y'] }: { value: Period; onChange: (p: Period) => void; types?: PT[] }) {
   const names: Record<PT, string> = { M: 'Month', Q: 'Quarter', H: 'Half', Y: 'Year' };
   return <div className="row" style={{ gap: 6 }}>
-    <Seg value={value.t} options={types.map(t => [t, names[t]] as [PT, string])} onChange={t => onChange(currentPeriod(t))} />
-    {value.t !== 'Y' && <select aria-label="Period" value={value.n} onChange={e => onChange({ t: value.t, n: Number(e.target.value) })}>{periodOptions(value.t).map(o => <option key={o.n} value={o.n}>{periodLabel(o)}{o.n === currentPeriod(value.t).n ? ' (now)' : ''}</option>)}</select>}
+    <Seg value={value.t} options={types.map(t => [t, names[t]] as [PT, string])} onChange={t => onChange({ ...currentPeriod(t), full: value.full })} />
+    {value.t !== 'Y' && <select aria-label="Period" value={value.n} onChange={e => onChange({ t: value.t, n: Number(e.target.value), full: value.full })}>{periodOptions(value.t).map(o => <option key={o.n} value={o.n}>{periodLabel(o)}{o.n === currentPeriod(value.t).n ? ' (now)' : ''}</option>)}</select>}
+    {value.t !== 'M' && <Seg value={value.full ? 'full' : 'sofar'} options={[['sofar', 'So far'], ['full', 'Whole ' + (value.t === 'Y' ? 'year' : value.t === 'H' ? 'half' : 'quarter')]]} onChange={v => onChange({ ...value, full: v === 'full' })} />}
   </div>;
 }
 

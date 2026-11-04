@@ -38,12 +38,13 @@ export const curMonth = () => { const n = today(); if (n < monthStart(FY, 1)) re
 
 // ---------------- periods ----------------
 export type PT = 'M' | 'Q' | 'H' | 'Y';
-export type Period = { t: PT; n: number };
+/** full: judge against the whole period (all its deliverables and the full-period plan), not only what is due so far. */
+export type Period = { t: PT; n: number; full?: boolean };
 export function periodMonths(p: Period): number[] { if (p.t === 'M') return [p.n]; if (p.t === 'Q') return qMonths(p.n); if (p.t === 'H') return p.n === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12]; return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; }
-export function periodLabel(p: Period) { return p.t === 'M' ? MONTHS[p.n - 1] : p.t === 'Q' ? `Q${p.n}` : p.t === 'H' ? (p.n === 1 ? 'First half' : 'Second half') : 'Year'; }
+export function periodLabel(p: Period) { return (p.t === 'M' ? MONTHS[p.n - 1] : p.t === 'Q' ? `Q${p.n}` : p.t === 'H' ? (p.n === 1 ? 'First half' : 'Second half') : 'Year') + (p.full && p.t !== 'M' ? ' (whole)' : ''); }
 export function currentPeriod(t: PT): Period { const m = curMonth(); return { t, n: t === 'M' ? m : t === 'Q' ? qOfMonth(m) : t === 'H' ? (m <= 6 ? 1 : 2) : 1 }; }
 export function periodOptions(t: PT): Period[] { const k = t === 'M' ? 12 : t === 'Q' ? 4 : t === 'H' ? 2 : 1; return Array.from({ length: k }, (_, i) => ({ t, n: i + 1 })); }
-export const pkey = (p: Period) => p.t + p.n;
+export const pkey = (p: Period) => p.t + p.n + (p.full ? 'f' : '');
 /** Share of the period that has passed (0 before it starts, 1 after it ends). */
 export function elapsed(p: Period) { const ms = periodMonths(p); const s = monthStart(FY, ms[0]).getTime(), e = monthStart(FY, ms[ms.length - 1] + 1).getTime(); return Math.max(0, Math.min(1, (today().getTime() - s) / (e - s))); }
 
@@ -168,12 +169,12 @@ export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 
   } else if (k.measure === 'deliverables') {
     const cm = curMonth();
     const ds = db.deliverables.filter(d => d.key_result_id === k.id && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
-    const due = ds.filter(d => d.month <= cm);
+    const due = p.full ? ds : ds.filter(d => d.month <= cm);
     target = sum(ds.map(d => Number(d.weight) || 1)); actual = sum(ds.filter(d => isAccepted(db, d)).map(d => Number(d.weight) || 1));
     progress = due.length ? weighted(due.map(d => [Number(d.weight) || 1, isAccepted(db, d) ? 1 : 0])) : null; toDate = true;
   } else if (k.measure === 'plan') {
     const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id);
-    if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups, l.metric) : null; const t2 = done.length ? planBy(db, u, l.section, done, l.line_groups, false, l.metric) : null; progress = ratioFor(k, actual, t2); toDate = true; }
+    if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups, l.metric) : null; const t2 = done.length ? (p.full ? target : planBy(db, u, l.section, done, l.line_groups, false, l.metric)) : null; progress = ratioFor(k, actual, t2); toDate = true; }
   } else { target = krTarget(db, k, p); actual = krActual(db, k, p); progress = ratioFor(k, actual, target); }
   const st = statusFor(db, progress, k.confidence, e, toDate);
   const r: KrState = { target, actual, progress, expected: e, toDate, ...st };
@@ -228,7 +229,7 @@ export function orgShare(db: DB, level: string) { const w = db.settings.org_weig
 export function delivScore(db: DB, posIds: Set<string>, p: Period) {
   const ms = periodMonths(p), cm = curMonth();
   const ds = db.deliverables.filter(d => posIds.has(d.owner_position_id) && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
-  const due = ds.filter(d => d.month <= cm);
+  const due = p.full ? ds : ds.filter(d => d.month <= cm);
   return { total: ds.length, due: due.length, accepted: ds.filter(d => isAccepted(db, d)).length, done: ds.filter(d => d.status === 'done' && !isAccepted(db, d)).length, score: due.length ? weighted(due.map(d => [Number(d.weight) || 1, isAccepted(db, d) ? (d.rating ? Math.min(1, 0.6 + d.rating * 0.1) : 1) : 0])) : null };
 }
 /** The agreed scorecard for the quarter a period falls in (if any). */
