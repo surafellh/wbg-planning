@@ -1,6 +1,6 @@
 /* STUDIO — rescope editor, monthly resources & payment scheduling, project portfolio, backup & restore. */
 import { useMemo, useState } from 'react';
-import { useData, useSave, byId, TABLES, type DB, type Row } from '../../lib/data';
+import { useData, useSave, byId, posName, TABLES, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
 import { MONTHS, qMonths, qOfMonth, curMonth, linesOf, lineVals, lineQty, sum, money, pct, fmt, needLines, PAY_PATTERN, type NeedLine } from '../../lib/calc';
 import { Page, Cmd, Seg, Pill, Empty, Modal, NumIn, LineChart } from '../../lib/ui';
@@ -124,7 +124,7 @@ export function ResourcesMonthly() {
 const STATUS: [string, string][] = ['Not started', 'In progress', 'On hold', 'Completed', 'Cancelled'].map(s => [s, s]);
 const RAG: [string, string][] = [['Green', 'Green'], ['Amber', 'Amber'], ['Red', 'Red']];
 export function Portfolio({ edit }: { edit?: boolean }) {
-  const { db, can, unit } = useData(); const save = useSave(); const [scope, setScope] = useState<'all' | 'unit'>(edit || can('seeGroup') ? 'all' : 'unit'); const [busy, setBusy] = useState(false); const [st, setSt] = useState(''); const [pv, setPv] = useState<'register' | 'monthly'>('register');
+  const { db, can, unit } = useData(); const save = useSave(); const [scope, setScope] = useState<'all' | 'unit'>(edit || can('seeGroup') ? 'all' : 'unit'); const [busy, setBusy] = useState(false); const [st, setSt] = useState(''); const [pv, setPv] = useState<'register' | 'monthly' | 'phases'>('register');
   const source = useMemo(() => db ? db.pmo_projects.filter(p => (scope === 'all' || p.unit_id === unit) && (!st || p.status === st)).sort((a, b) => (a.unit_code || '').localeCompare(b.unit_code || '') || (a.code || '').localeCompare(b.code || '', undefined, { numeric: true })).map(p => ({ ...p, unit_id: p.unit_id || '' })) : [], [db, scope, unit, st]);
   const d = useDraft(source, [source]);
   if (!db) return null;
@@ -146,9 +146,9 @@ export function Portfolio({ edit }: { edit?: boolean }) {
   }
   const all = d.rows; const cnt = (k: string, v: string) => all.filter(r => r[k] === v).length;
   return <Page title="Project portfolio" desc={edit ? 'Capital, business and digital projects across the Group — maintained by the PMO.' : 'Projects, their status and whether they are on time and on budget.'} help={<p>The portfolio comes from the weekly tracker's project register. The PMO keeps it up to date here (Studio); unit leaders see their own projects in Insights. Link each project to the strategic goal it serves so it shows in the strategy. Overdue = past its (revised) end date and not completed.</p>}>
-    <Cmd right={<><Seg value={pv} options={[['register', 'Register'], ['monthly', 'Monthly progress']]} onChange={setPv} />{(edit || can('seeGroup')) && <Seg value={scope} options={[['all', 'All companies'], ['unit', 'Selected unit']]} onChange={setScope} />}<select value={st} onChange={e => setSt(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUS.map(([s]) => <option key={s}>{s}</option>)}</select></>} />
+    <Cmd right={<><Seg value={pv} options={[['register', 'Register'], ['monthly', 'Monthly progress'], ['phases', 'Phases & plan']]} onChange={setPv} />{(edit || can('seeGroup')) && <Seg value={scope} options={[['all', 'All companies'], ['unit', 'Selected unit']]} onChange={setScope} />}<select value={st} onChange={e => setSt(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUS.map(([s]) => <option key={s}>{s}</option>)}</select></>} />
     <div className="kpis"><div className="tile"><div className="tv">{all.length}</div><div className="tl">Projects</div></div><div className="tile good"><div className="tv">{cnt('rag', 'Green')}</div><div className="tl">Green</div></div><div className="tile warn"><div className="tv">{cnt('rag', 'Amber')}</div><div className="tl">Amber</div></div><div className="tile bad"><div className="tv">{cnt('rag', 'Red')}</div><div className="tl">Red</div></div><div className="tile bad"><div className="tv">{all.filter(late).length}</div><div className="tl">Overdue</div></div><div className="tile"><div className="tv">{money(sum(all.map(r => Number(r.budget) || 0)))}</div><div className="tl">Total budget</div></div></div>
-    {pv === 'monthly' ? <ProjectProgress projects={source} /> : <><Sheet cols={cols} rows={all} onChange={d.change} readOnly={!edit} onAdd={edit ? () => d.add({ name: '', status: 'Not started', rag: 'Green', unit_id: unit } as Row) : undefined} onDelete={edit ? d.remove : undefined} />
+    {pv === 'phases' ? <PhasePlanner projects={source} /> : pv === 'monthly' ? <ProjectProgress projects={source} /> : <><Sheet cols={cols} rows={all} onChange={d.change} readOnly={!edit} onAdd={edit ? () => d.add({ name: '', status: 'Not started', rag: 'Green', unit_id: unit } as Row) : undefined} onDelete={edit ? d.remove : undefined} />
     <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></>}
   </Page>;
 }
@@ -187,6 +187,51 @@ function ProjectProgress({ projects }: { projects: Row[] }) {
           <td>{ed ? <input type="text" defaultValue={r?.note || ''} placeholder={prev?.note ? 'last: ' + prev.note.slice(0, 40) : 'What moved this month'} onBlur={e => { if ((e.target.value || null) !== (r?.note || null)) put(p, 'note', e.target.value || null); }} /> : <span className="mini">{r?.note}</span>}</td></tr>; })}
     </tbody></table></div>
     {!projects.length && <Empty>No projects in this view.</Empty>}
+  </>;
+}
+
+
+/** Project phases by month: a phase runs from one month to another; each month of it can become a monthly deliverable
+    for the phase owner, which is then broken into weekly activities in Plan → Weekly activities. */
+function PhasePlanner({ projects }: { projects: Row[] }) {
+  const { db, me, role, can, unit, user } = useData(); const save = useSave(); const [pid, setPid] = useState(''); const [nm, setNm] = useState(''); if (!db || !me) return null;
+  const engagements = db.projects.filter(p => (can('seeGroup') || p.unit_id === me.unit_id) && (!unit || p.unit_id === unit));
+  const all: [string, string, Row][] = [...projects.map(p => ['pmo:' + p.id, (p.code ? p.code + ' · ' : '') + p.name, p] as [string, string, Row]), ...engagements.map(p => ['eng:' + p.id, p.name, p] as [string, string, Row])];
+  const cur = all.find(x => x[0] === pid) || all[0]; if (!cur) return <Empty>No projects in this view.</Empty>;
+  const [kind, id] = cur[0].split(':'); const proj = cur[2]; const punit = proj.unit_id;
+  const phases = db.project_phases.filter(f => (kind === 'pmo' ? f.pmo_project_id === id : f.project_id === id)).sort((a, b) => a.start_month - b.start_month || a.sort - b.sort);
+  const pmo = byId(db.org_units, me.org_unit_id)?.code === 'pmo';
+  const ed = can('approve') || pmo || (['unit_head', 'planning_head', 'dept_head', 'div_head'].includes(role) && punit === me.unit_id);
+  const people = db.positions.filter(x => x.unit_id === punit && x.holder_name).map(x => [x.id, x.holder_name] as [string, string]);
+  const delsOf = (f: Row) => db.deliverables.filter(d => d.phase_id === f.id && d.status !== 'removed');
+  const upd = (f: Row, patch: Row) => save(() => sb.from('project_phases').update(patch).eq('id', f.id), ['project_phases']);
+  async function add() { if (!nm.trim()) return; const cm = curMonth();
+    await save(() => sb.from('project_phases').insert({ unit_id: punit, [kind === 'pmo' ? 'pmo_project_id' : 'project_id']: id, name: nm.trim(), start_month: cm, end_month: Math.min(12, cm + 1), sort: phases.length + 1 }), ['project_phases'], 'Phase added'); setNm(''); }
+  async function makeDels(f: Row) {
+    if (!f.owner_position_id) { alert('Choose the phase owner first — the monthly deliverables go to them.'); return; }
+    const have = new Set(delsOf(f).map(d => d.month)); const months = Array.from({ length: f.end_month - f.start_month + 1 }, (_, i) => f.start_month + i).filter(x => !have.has(x));
+    if (!months.length) return; const n = months.length; const w = f.weight != null ? Math.round(Number(f.weight) / n * 100) / 100 : null;
+    await save(() => sb.from('deliverables').insert(months.map(mm => ({ unit_id: punit, owner_position_id: f.owner_position_id, fiscal_year: '2026/27', month: mm, quarter: qOfMonth(mm), title: `${f.name} — ${MONTHS[mm - 1]}`, phase_id: f.id, status: 'planned', source: 'plan', created_by: user.id, weight: w }))), ['deliverables'], `${n} monthly deliverable${n > 1 ? 's' : ''} created — rename them to what each month must produce, then plan the weeks`);
+  }
+  const Q = [1, 2, 3, 4];
+  return <>
+    <div className="row" style={{ marginBottom: 8 }}><b>Project</b><select value={cur[0]} onChange={e => setPid(e.target.value)} style={{ maxWidth: 420 }}>{projects.length > 0 && <optgroup label="Project portfolio">{all.filter(x => x[0].startsWith('pmo')).map(x => <option key={x[0]} value={x[0]}>{x[1]}</option>)}</optgroup>}{engagements.length > 0 && <optgroup label="Engagements (revenue projects)">{all.filter(x => x[0].startsWith('eng')).map(x => <option key={x[0]} value={x[0]}>{x[1]}</option>)}</optgroup>}</select>
+      <span className="note">{byId(db.org_units, punit)?.name}</span><span className="sp" /></div>
+    <p className="note" style={{ marginBottom: 8 }}>Break the project into phases and set the months each one runs. <b>Make monthly deliverables</b> turns every month of a phase into a deliverable for the phase owner; in Plan → Weekly activities they appear with the weekly steps that deliver them. Progress of a phase = its monthly deliverables accepted.</p>
+    <div className="tw"><table className="phases"><thead><tr><th className="first">Phase</th><th>Owner</th><th className="n">From</th><th className="n">To</th><th className="n" data-tip="Share of the project (optional)">Weight %</th>
+      {Q.map(q => <th key={q} colSpan={3} className="qh">Q{q}</th>)}<th>Monthly deliverables</th></tr>
+      <tr><th /><th /><th /><th /><th />{MONTHS.map(x => <th key={x} className="pmh">{x}</th>)}<th /></tr></thead><tbody>
+      {phases.map(f => { const ds = delsOf(f); const acc = ds.filter(d => d.status === 'accepted').length; const span = f.end_month - f.start_month + 1;
+        return <tr key={f.id}><td className="first">{ed ? <input className="stepin" defaultValue={f.name} onBlur={e => e.target.value.trim() && e.target.value !== f.name && upd(f, { name: e.target.value.trim() })} /> : f.name}</td>
+          <td>{ed ? <select value={f.owner_position_id || ''} onChange={e => upd(f, { owner_position_id: e.target.value || null })}><option value="">—</option>{people.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select> : posName(db, f.owner_position_id)}</td>
+          <td className="n">{ed ? <select value={f.start_month} onChange={e => { const v = Number(e.target.value); upd(f, { start_month: v, end_month: Math.max(v, f.end_month) }); }}>{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select> : MONTHS[f.start_month - 1]}</td>
+          <td className="n">{ed ? <select value={f.end_month} onChange={e => upd(f, { end_month: Math.max(Number(e.target.value), f.start_month) })}>{MONTHS.map((x, i) => i + 1 >= f.start_month && <option key={x} value={i + 1}>{x}</option>)}</select> : MONTHS[f.end_month - 1]}</td>
+          <td className="n">{ed ? <NumIn w={56} value={f.weight} onChange={v => upd(f, { weight: v })} /> : f.weight ?? ''}</td>
+          {MONTHS.map((_, i) => { const mm = i + 1; const inR = mm >= f.start_month && mm <= f.end_month; const d = ds.find(x => x.month === mm); return <td key={i} className={'gc' + (inR ? ' in' : '') + (mm === f.start_month ? ' s' : '') + (mm === f.end_month ? ' e' : '') + (d?.status === 'accepted' ? ' acc' : '')} data-tip={d ? `${d.title} · ${d.status === 'done' ? 'submitted' : d.status}` : inR ? 'No deliverable yet for this month' : undefined}>{d ? (d.status === 'accepted' ? '✓' : '●') : ''}</td>; })}
+          <td className="nowrap">{ds.length ? <span className="mini">{acc}/{ds.length} accepted · </span> : null}{ed && ds.length < span && <button className="btn xs pri" onClick={() => makeDels(f)}>{ds.length ? `+ ${span - ds.length} missing` : 'Make monthly deliverables'}</button>}{ed && !ds.length && <button className="btn xs" onClick={() => { if (confirm('Delete this phase?')) save(() => sb.from('project_phases').delete().eq('id', f.id), ['project_phases'], 'Phase deleted'); }}>×</button>}</td></tr>; })}
+      {!phases.length && <tr><td colSpan={18} className="note">No phases yet.</td></tr>}
+      {ed && <tr><td colSpan={18}><div className="row"><input type="text" placeholder="New phase, e.g. Design, Procurement, Installation, Handover" value={nm} onChange={e => setNm(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} style={{ minWidth: 340 }} /><button className="btn sm" disabled={!nm.trim()} onClick={add}>+ Phase</button></div></td></tr>}
+    </tbody></table></div>
   </>;
 }
 

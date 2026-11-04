@@ -10,6 +10,7 @@ import { Sheet, useDraft, type Col } from '../../lib/sheet';
 import { teamOf } from '../Work';
 import { planStatus, KrModal } from '../OkrPlan';
 import { SubmitModal } from './Record';
+import { StepPlanner } from './StepPlanner';
 
 const LEADS = ['unit_head', 'planning_head', 'super_admin', 'group_strategy', 'executive'];
 export const isHead = (role: string) => role !== 'employee';
@@ -161,7 +162,7 @@ function Deliverables() {
 /* ---------- Weekly activities for a month (the tracker) ---------- */
 export function weeksOfMonth(m: number) { const out: Date[] = []; let w = weekStart(monthStart(FY, m)); const end = monthStart(FY, m + 1); while (w < end) { out.push(w); w = new Date(w.getTime() + 7 * 864e5); } return out; }
 function Activities() {
-  const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false); const [detail, setDetail] = useDetail('acts'); const [wf, setWf] = useState('');
+  const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const [m, setM] = useState(curMonth()); const [scope, setScope] = useState<'me' | 'team'>('me'); const [busy, setBusy] = useState(false); const [detail, setDetail] = useDetail('acts'); const [wf, setWf] = useState(''); const [view, setView0] = useState<'steps' | 'sheet'>(() => { try { return (localStorage.getItem('wbg.weekview') as any) || 'steps'; } catch { return 'steps'; } }); const setView = (v: 'steps' | 'sheet') => { setView0(v); try { localStorage.setItem('wbg.weekview', v); } catch { /* ignore */ } };
   const head = isHead(role); const rules = db?.settings.work_rules || { activities: 'both' }; const mode = rules.activities || 'both';
   const team = useMemo(() => db && me ? (head ? teamOf(db, me, LEADS.includes(role)) : [me]) : [], [db, me, head, role]);
   const weeks = weeksOfMonth(m); const wkeys = weeks.map(w => ymd(w)); const thisWk = ymd(weekStart(new Date()));
@@ -223,14 +224,16 @@ function Activities() {
   const wsDefault = wf || wkeys.find(w => w >= thisWk) || wkeys[0];
   return <div className="stack">
     <div className="row"><p className="note" style={{ flex: 1 }}>At the start of the month, plan your activities week by week from your {t('deliverable', true).toLowerCase()}, with the detail of the weekly tracker. You can change the plan every week; the plan you submit first is kept as the initial plan. Progress is updated in Record → This week.{mode === 'managers' && !head ? ' In your organisation managers plan the activities; ask yours to add or change one.' : ''}</p>
-      <DetailToggle v={detail} set={setDetail} />{head && <Seg value={scope} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setScope} />}
+      <Seg value={view} options={[['steps', 'By deliverable'], ['sheet', 'Spreadsheet']]} onChange={setView} />{view === 'sheet' && <DetailToggle v={detail} set={setDetail} />}{head && <Seg value={scope} options={[['me', 'Mine'], ['team', 'My team']]} onChange={setScope} />}
       <select value={m} onChange={e => { setM(Number(e.target.value)); setWf(''); }} aria-label="Month">{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}{i + 1 === curMonth() ? ' (now)' : ''}</option>)}</select>
-      <select value={wf} onChange={e => setWf(e.target.value)} aria-label="Week"><option value="">All weeks ({MONTHS[m - 1]})</option>{weeks.map(w => <option key={ymd(w)} value={ymd(w)}>{weekLabel(w)}{ymd(w) === thisWk ? ' (this week)' : ''}</option>)}</select></div>
+      {view === 'sheet' && <select value={wf} onChange={e => setWf(e.target.value)} aria-label="Week"><option value="">All weeks ({MONTHS[m - 1]})</option>{weeks.map(w => <option key={ymd(w)} value={ymd(w)}>{weekLabel(w)}{ymd(w) === thisWk ? ' (this week)' : ''}</option>)}</select>}</div>
+    {view === 'steps' ? <><StepPlanner people={people.filter(Boolean) as Row[]} m={m} canEditFor={owner => owner === me.id ? (mode !== 'managers' || head) : head && mode !== 'members'} />
+      <div className="row end">{lockedMonth ? <Pill tone="good">{MONTHS[m - 1]} plan submitted</Pill> : <button className="btn sm pri" disabled={!d.rows.length} onClick={submitMonth} data-tip="Keeps this plan as the initial plan for the month; you can still change it every week">Submit {MONTHS[m - 1]} plan</button>}</div></> : <>
     {!dels.length && <div className="banner">No {t('deliverable', true).toLowerCase()} for {MONTHS[m - 1]} yet — plan them first (Plan → {t('deliverable', true)}), or add activities without a link.</div>}
     {tooManyTop.length > 0 && <div className="banner warn">More than {topMax} top priorities (★) in {tooManyTop.map(w => weekLabel(new Date(w + 'T00:00:00Z'))).join(', ')}.</div>}
     <Sheet cols={cols} rows={d.rows} onChange={d.change} onDelete={i => canRow(d.rows[i]) && d.remove(i)} onAdd={canAdd ? () => d.add({ title: '', kind: 'Task', category: '', del: dels.find(x => x.owner_position_id === me.id)?.id || '', week: wsDefault, owner: me.id, due: '', priority: '2', top: '', status: 'Not started', baseline: '', carried: 0 } as Row) : undefined}
       footer={<>{lockedMonth ? <Pill tone="good">{MONTHS[m - 1]} plan submitted</Pill> : <button className="btn sm pri" disabled={d.dirty || !d.rows.length} onClick={submitMonth}>Submit {MONTHS[m - 1]} plan</button>}</>} />
-    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} />
+    <SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></>}
   </div>;
 }
 
