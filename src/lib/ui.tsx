@@ -36,9 +36,15 @@ export function Seg<T extends string | number>({ value, options, onChange }: { v
 export function UnitPicker({ allowAll }: { allowAll?: boolean } = {}) {
   const { can, units, unit, setUnit, allUnits, setAllUnits } = useData();
   if (!can('seeGroup')) return null;
-  const v = allowAll && allUnits ? '__all' : unit || '';
-  return <label className="scope"><span>{allowAll ? 'Viewing' : 'Unit'}</span><select value={v} onChange={e => { if (e.target.value === '__all') setAllUnits(true); else { setUnit(e.target.value); if (allowAll) setAllUnits(false); } }} aria-label="Unit">
-    {allowAll && <option value="__all">All units — Group view</option>}{allowAll && <option disabled>──────────</option>}{[['business', 'Business units'], ['function', 'Corporate functions']].map(([k, l]) => { const us = units.filter(u => (u.unit_type === 'business' ? 'business' : 'function') === k); return us.length ? <optgroup key={k} label={l}>{us.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</optgroup> : null; })}</select></label>;
+  const all = !!allowAll && allUnits;
+  const sel = <select value={unit || ''} onChange={e => { setUnit(e.target.value); if (allowAll) setAllUnits(false); }} aria-label="Unit" disabled={all}>
+    {[['business', 'Business units'], ['function', 'Corporate functions']].map(([k, l]) => { const us = units.filter(u => (u.unit_type === 'business' ? 'business' : 'function') === k); return us.length ? <optgroup key={k} label={l}>{us.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</optgroup> : null; })}</select>;
+  if (!allowAll) return <label className="scope"><span>Unit</span>{sel}</label>;
+  // Group-level people choose between all units together and one unit; the choice is remembered across pages
+  return <div className="scopebox" role="group" aria-label="Scope">
+    <button className={all ? 'on' : ''} onClick={() => setAllUnits(true)} data-tip="All units combined — the unit filter is switched off">All units</button>
+    <button className={!all ? 'on' : ''} onClick={() => setAllUnits(false)} data-tip="One unit — pick it in the list">One unit</button>
+    {!all && sel}</div>;
 }
 
 export function Cmd({ children, right }: { children?: ReactNode; right?: ReactNode }) { return <div className="cmdbar"><UnitPicker />{children}<span className="sp" />{right}</div>; }

@@ -16,7 +16,8 @@ export function unitGoalsTree(db: DB, unit: string) {
 export const topObjectives = (db: DB, goalId: string) => db.objectives.filter(o => o.unit_goal_id === goalId && o.status !== 'Archived').sort((a, b) => a.sort - b.sort);
 export const unlinked = (db: DB, unit: string) => db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id);
 /** All objectives under a goal, at every level (for goal and pillar scores). */
-export function goalScore(db: DB, goalId: string, p: Period) { return avg(topObjectives(db, goalId).map(o => objScore(db, o, p))); }
+/** Goal score: its objectives' scores, weighted by each objective's weight in the goal (equal when none set). */
+export function goalScore(db: DB, goalId: string, p: Period) { const os = topObjectives(db, goalId); const sh = shares(os, o => o.weight_to_parent); return weighted(os.map(o => [sh.get(o) || 0, objScore(db, o, p)])); }
 /** Pillar score: its goals' scores, weighted by each goal's weight in the pillar (equal when no weights are set). */
 export function pillarScore(db: DB, pillarId: string, p: Period) { const gs = db.unit_goals.filter(g => g.pillar_id === pillarId); return weighted(gs.map(g => [Number(g.weight) || (gs.some(x => Number(x.weight)) ? 0 : 1), goalScore(db, g.id, p)])); }
 
@@ -84,7 +85,7 @@ export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; o
   const own = ks.length && kids.length ? ownShare(db, o) : null;
   return <div className="obj">
     <div className="objh"><Ring p={objScore(db, o, p)} size={40} />
-      <div className="ot">{o.text}<div className="om"><span className="lvl">{LVL[o.level]}</span> {org?.name} · {posName(db, o.owner_position_id)} · {o.status}{o.weight_to_parent != null && below ? <> · <WeightChip w={Number(o.weight_to_parent)} of={o.parent_kr_id ? 'the key result above' : 'the objective above'} /></> : null}{/Link to check/.test(o.review_note || '') && <> <span className="pill warn" data-tip={o.review_note}>link to check</span></>}</div></div>
+      <div className="ot">{o.text}<div className="om"><span className="lvl">{LVL[o.level]}</span> {org?.name} · {posName(db, o.owner_position_id)} · {o.status}{o.weight_to_parent != null && below ? <> · <WeightChip w={Number(o.weight_to_parent)} of={o.parent_kr_id ? 'the key result above' : 'the objective above'} /></> : o.unit_goal_id && !below && topObjectives(db, o.unit_goal_id).length > 1 ? <> · <WeightChip w={shares(topObjectives(db, o.unit_goal_id), x => x.weight_to_parent).get(topObjectives(db, o.unit_goal_id).find(x => x.id === o.id)!) || 0} of="the goal" /></> : null}{/Link to check/.test(o.review_note || '') && <> <span className="pill warn" data-tip={o.review_note}>link to check</span></>}</div></div>
       <StatePill s={st} />{extra?.(o)}
     </div>
     {own != null && <div className="mini" style={{ margin: '6px 0 0 50px' }}>Score = <b>{own}%</b> own key results + <b>{100 - own}%</b> objectives below</div>}

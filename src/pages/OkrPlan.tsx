@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useData, useSave, byId, type DB, type Row } from '../lib/data';
 import { sb } from '../lib/supabase';
 import { krsOf, childObjectives, sum, fmt, pct, linesOf, MONTHS, AGG_NAME, DIR_NAME, subtreeIds, ownShare, objScore, liveObj, type Period } from '../lib/calc';
-import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter, MoreMenu } from '../lib/ui';
+import { Page, Cmd, Modal, Pill, Empty, NumIn, Seg, PeriodPicker, usePeriod, OrgFilter, MoreMenu, WeightSplit } from '../lib/ui';
 import { Link } from 'react-router-dom';
-import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer, ensureUnitGoal, isFunctionUnit, groupGoalsOf } from './Goals';
+import { unitGoalsTree, topObjectives, unlinked, ObjCard, KrDrawer, ensureUnitGoal, isFunctionUnit, groupGoalsOf, WeightChip } from './Goals';
 import { GoalModal } from './studio/Studio';
 
 export function orgOptions(db: DB, unit: string) {
@@ -49,7 +49,7 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
     const org = byId(db!.org_units, f.org_unit_id);
     const row: Row = { unit_id: unit, org_unit_id: f.org_unit_id, level: kindToLevel(org?.kind || 'unit'), text: f.text.trim(), owner_position_id: f.owner_position_id || null,
       unit_goal_id: f.link === 'goal' ? f.unit_goal_id || null : null, parent_objective_id: f.link === 'obj' ? f.parent_objective_id || null : null, parent_kr_id: f.link === 'kr' ? f.parent_kr_id || null : null,
-      weight_to_parent: f.link === 'goal' ? null : f.weight_to_parent ?? null, own_weight: f.own_weight ?? null };
+      weight_to_parent: f.weight_to_parent ?? null, own_weight: f.own_weight ?? null };
     const ok = await save(() => f.id ? sb.from('objectives').update(row).eq('id', f.id) : sb.from('objectives').insert({ ...row, status: 'Draft' }), ['objectives'], 'Objective saved');
     if (ok) onClose();
   }
@@ -67,7 +67,7 @@ function ObjModal({ unit, init, onClose, parentOrg }: { unit: string; init: Row;
     <label className="f">Objective<textarea rows={2} value={f.text || ''} onChange={e => set('text', e.target.value)} placeholder="What we want to achieve, in plain words" /></label>
     <div className="g2"><label className="f">Owned by (organisation)<select value={f.org_unit_id || ''} onChange={e => set('org_unit_id', e.target.value)}>{orgs.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>
       <label className="f">Owner<select value={f.owner_position_id || ''} onChange={e => set('owner_position_id', e.target.value)}><option value="">—</option>{people.map(p => <option key={p.id} value={p.id}>{(p.holder_name || 'Vacant') + ' · ' + p.title}</option>)}</select></label></div>
-    <div className="g2">{f.link !== 'goal' && <label className="f" data-tip="Its share in the objective above. The objectives under one parent add up to 100% — at every level (unit → departments, department → divisions).">Weight in what it delivers (%)<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} /></label>}
+    <div className="g2"><label className="f" data-tip={f.link === 'goal' ? 'Its share of the strategic goal. When a unit has several objectives on one goal, their weights add up to 100%; empty = equal.' : 'Its share in the objective above. The objectives under one parent add up to 100% — at every level (unit → departments, department → divisions).'}>{f.link === 'goal' ? 'Weight in the strategic goal (%)' : 'Weight in what it delivers (%)'}<NumIn value={f.weight_to_parent} onChange={v => set('weight_to_parent', v)} />{f.link === 'goal' && f.unit_goal_id && (() => { const sib = db.objectives.filter(o => o.unit_goal_id === f.unit_goal_id && o.id !== f.id && o.status !== 'Archived' && !o.parent_objective_id); return sib.length ? <span className="mini">Other objectives on this goal: {sib.map(o => `${o.text.slice(0, 40)}${o.text.length > 40 ? '…' : ''} (${o.weight_to_parent ?? 'equal'}${o.weight_to_parent != null ? '%' : ''})`).join(' · ')}</span> : <span className="mini">Only objective on this goal — it carries 100%.</span>; })()}</label>
       <label className="f" data-tip="When this objective has its own key results AND objectives below it, its score = own share × its key results + the rest × the objectives below. Set it for this objective; empty uses the level default from Studio → Configuration.">Share from its own key results (%)<NumIn value={f.own_weight} onChange={v => set('own_weight', v)} /><span className="mini">Objectives below get {100 - (f.own_weight ?? ownShare(db, { level: kindToLevel(byId(db.org_units, f.org_unit_id)?.kind || 'unit') }))}%{f.own_weight == null ? ' (level default)' : ''}</span></label></div>
     <div className="row end"><button className="btn" onClick={onClose}>Cancel</button><button className="btn pri" disabled={!f.text?.trim() || (f.link === 'goal' && !(fn ? ggSel : f.unit_goal_id))} onClick={go}>Save</button></div>
   </Modal>;
@@ -233,8 +233,10 @@ export default function OkrPlan() {
     {headMode && <HeadView myOrg={me!.org_unit_id} p={p} extra={extra} onKr={id => setKm(byId(db.key_results, id)!)} onNew={newUnder} />}
     {!headMode && org && <section className="pil"><div className="pilh">Objectives of {byId(db.org_units, org)?.name} and below</div>{db.objectives.filter(o => subtreeIds(db, org).has(o.org_unit_id) && o.status !== 'Archived' && o.level !== 'individual').map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} depth={1} />)}</section>}
     {!headMode && !org && tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}><div className="pilh">{pil.code} · {pil.name}</div>
-      {goals.map(g => <div className="goal" key={g.id}><div className="goalh">{g.code} {g.name}<button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: g.id })}>+ Objective</button></div>
-        {topObjectives(db, g.id).map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>)}</section>)}
+      {goals.length > 1 && <WeightSplit label="Goals in the pillar" parts={goals.map(g => ({ name: `${g.code || ''} ${g.name}`, w: g.weight }))} />}
+      {goals.map(g => { const tops = topObjectives(db, g.id); return <div className="goal" key={g.id}><div className="goalh">{g.code} {g.name}{goals.length > 1 && <WeightChip w={g.weight != null ? Number(g.weight) : 100 / goals.length} of="the pillar" />}<button className="btn sm" onClick={() => setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: g.id })}>+ Objective</button></div>
+        {tops.length > 1 && <WeightSplit label="Objectives in the goal" parts={tops.map(o => ({ name: o.text, w: o.weight_to_parent }))} />}
+        {tops.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</div>; })}</section>)}
     {!headMode && !org && loose.length > 0 && <section className="pil"><div className="pilh" style={{ background: 'var(--warn)' }}>Not linked to a goal yet · {loose.length}</div>{loose.map(o => <ObjCard key={o.id} o={o} p={p} onKr={id => setKm(byId(db.key_results, id)!)} extra={extra} />)}</section>}
     {gm && <GoalModal init={gm} unit={unit} group={false} onClose={() => setGm(null)} />}
     {om && <ObjModal unit={unit} init={om} onClose={() => setOm(null)} parentOrg={headMode ? parentOrg : null} />}

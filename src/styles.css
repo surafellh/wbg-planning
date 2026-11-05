@@ -1,9 +1,10 @@
 :root{
-  --bg:#f4f6f9;--panel:#fff;--sunk:#f1f3f7;--ink:#18212d;--muted:#5b6778;--line:#e3e7ee;--line2:#cfd6e0;
-  --band:#f2b705;--band-ink:#211900;--chip:#fff1c2;--accent:#c89600;--link:#7d5b00;
-  --good:#1d8049;--good-soft:#e3f4ea;--warn:#a05f00;--warn-soft:#fdf0d5;--bad:#c0392b;--bad-soft:#fde6e3;--info-soft:#edf2fa;
-  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);--shadow2:0 4px 14px rgba(16,24,40,.08);
-  --sans:"Inter","Segoe UI",Arial,sans-serif;--mono:"IBM Plex Mono",Consolas,monospace;
+  --bg:#f6f5ef;--panel:#fff;--sunk:#faf8ee;--ink:#2a2208;--muted:#6b5f3a;--line:#e8e4d3;--line2:#d9d2b6;
+  --band:#f5c518;--band-ink:#2a2208;--chip:#fbefbd;--accent:#e0a800;--link:#8a6400;
+  --good:#1d7f55;--good-soft:#dff2e8;--warn:#8a5a00;--warn-soft:#fdeec4;--bad:#b63a26;--bad-soft:#fbe1db;--info-soft:#fbf3d0;
+  --hero:#f5c518;--hero-ink:#2a2208;--hero-muted:#5c4a10;
+  --shadow:0 1px 2px rgba(42,34,8,.05),0 1px 3px rgba(42,34,8,.04);--shadow2:0 4px 14px rgba(42,34,8,.08);
+  --sans:"Public Sans","Inter","Segoe UI",Arial,sans-serif;--head:"Bricolage Grotesque","Public Sans",sans-serif;--mono:"IBM Plex Mono",Consolas,monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#151513;--panel:#1d1d1a;--sunk:#252521;--ink:#ecebe5;--muted:#a3a194;--line:#33322c;--line2:#403e36;
@@ -429,3 +430,19 @@ table.phases{table-layout:auto}table.phases th.first,table.phases td.first{min-w
 .pilh{background:linear-gradient(90deg,var(--ink),color-mix(in srgb,var(--ink) 82%,var(--accent)))}
 table.t th{letter-spacing:.01em}
 .obj:hover{border-color:var(--line2)}
+
+.scopebox{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line2);border-radius:10px;background:var(--panel);padding:3px}
+.scopebox button{border:0;background:none;padding:5px 12px;border-radius:7px;font-weight:700;cursor:pointer;color:var(--muted);font-size:13px}
+.scopebox button.on{background:var(--band);color:var(--band-ink)}
+.scopebox select{margin-left:6px;border:0;border-left:1px solid var(--line);border-radius:0;padding:5px 8px;background:none;max-width:260px}
+
+/* day theme: warm white with the yellow band of the weekly tracker */
+h1,h2,.brand{font-family:var(--head,var(--sans))}
+:root:not([data-theme="dark"]) .hdr{background:var(--hero);color:var(--hero-ink);margin:0 0 14px;padding:22px 28px 16px;border-bottom:1px solid rgba(42,34,8,.12)}
+:root:not([data-theme="dark"]) .hdr p{color:var(--hero-muted)}
+:root:not([data-theme="dark"]) .hdr a{color:var(--hero-ink)}
+:root:not([data-theme="dark"]) .side{background:#fff}
+:root:not([data-theme="dark"]) .pilh{background:var(--ink);color:#fff8dc}
+:root:not([data-theme="dark"]) .tabs button.on,:root:not([data-theme="dark"]) .vtabs a.on{border-bottom-color:var(--band)}
+:root:not([data-theme="dark"]) .tile .tv{font-family:var(--head,var(--sans))}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .hdr{background:none;color:inherit;margin:0;padding:22px 28px 6px;border-bottom:0}:root:not([data-theme="light"]) .hdr p{color:var(--muted)}:root:not([data-theme="light"]) .hdr a{color:var(--link)}:root:not([data-theme="light"]) .side{background:var(--panel)}:root:not([data-theme="light"]) .pilh{background:var(--ink);color:var(--bg)}}

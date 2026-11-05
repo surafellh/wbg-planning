@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData, byId, moduleOn, type DB, type Row } from '../lib/data';
 import { incomeStatement, cashFlow, MONTHS, money, pct, lastActualMonth, sum, periodMonths, periodLabel, orgScore, objScore, krsOf, krState, subtreeIds, workStats, delivScore, weekStart, ymd, weekLabel, personResult, bandOf, planBy, actualBy, linesOf, avg, curMonth, IS_KEY, lineVals, lineQty, lineActual, fmt, type Period } from '../lib/calc';
-import { Page, Seg, UnitPicker, Empty, PeriodPicker, usePeriod, BarChart, LineChart, StatusStack, Bar, StatePill, Ring } from '../lib/ui';
+import { Page, Seg, UnitPicker, Empty, PeriodPicker, usePeriod, BarChart, LineChart, StatusStack, Bar, StatePill, Ring, Pill } from '../lib/ui';
 import { statusCounts, unitKrs, unitGoalsTree, goalScore, pillarScore } from './Goals';
 import { OrgRows, ExpandAll, useOpen, rowScore, subtreeKrs } from '../lib/orgtree';
 
@@ -98,6 +98,79 @@ function WorkReport({ db, us }: { db: DB; us: string[] }) {
     <WorkByOrg db={db} us={us} weeks={weeks} />
     <h2 style={{ margin: '14px 0 6px' }}>Open blockers · {stuck.length}</h2>
     {stuck.length ? <div className="tw"><table className="t"><thead><tr><th>Activity</th><th>Blocker</th><th>Help needed from</th><th>Owner</th><th>Week</th></tr></thead><tbody>{stuck.map(a => <tr key={a.id}><td>{a.title}</td><td>{a.blocker}</td><td className="mini">{byId(db.org_units, a.help_from_unit)?.name || '—'}</td><td>{byId(db.positions, a.owner_position_id)?.holder_name}</td><td>{weekLabel(new Date(a.week_start + 'T00:00:00Z'))}</td></tr>)}</tbody></table></div> : <p className="note">None.</p>}
+  </>;
+}
+
+
+const DST: Record<string, [string, string]> = { planned: ['Planned', 'none'], done: ['Submitted', 'warn'], accepted: ['Accepted', 'good'], returned: ['Returned', 'bad'] };
+/** Monthly work: every deliverable of the chosen months, line by line, with totals. */
+function MonthlyReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
+  const [q, setQ] = useState(''); const [st, setSt] = useState(''); const [by, setBy] = useState<'line' | 'person'>('line');
+  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name).map(x => x.id)); const ms = periodMonths(p); const cm = curMonth();
+  const all = db.deliverables.filter(d => pos.has(d.owner_position_id) && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
+  const list = all.filter(d => (!st || d.status === st) && (!q || (d.title + ' ' + (byId(db.positions, d.owner_position_id)?.holder_name || '')).toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => a.month - b.month || (byId(db.positions, a.owner_position_id)?.holder_name || '').localeCompare(byId(db.positions, b.owner_position_id)?.holder_name || ''));
+  const due = all.filter(d => p.full || d.month <= cm); const acc = due.filter(d => d.status === 'accepted'); const sc = delivScore(db, pos, p);
+  const rated = all.filter(d => d.rating); const avgR = rated.length ? sum(rated.map(d => Number(d.rating))) / rated.length : null;
+  const people = Array.from(new Set(all.map(d => d.owner_position_id))).map(id => { const ds = all.filter(d => d.owner_position_id === id); const dd = ds.filter(d => p.full || d.month <= cm); return { id, n: ds.length, due: dd.length, sub: ds.filter(d => d.status === 'done').length, acc: ds.filter(d => d.status === 'accepted').length, ret: ds.filter(d => d.status === 'returned').length, score: delivScore(db, new Set([id]), p).score }; }).sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const name = (id: string) => byId(db.positions, id)?.holder_name || '—';
+  return <>
+    <div className="kpis">
+      <div className="tile"><div className="tv">{all.length}</div><div className="tl">Deliverables · {periodLabel(p)}</div><div className="ts">{due.length} due{p.full ? '' : ' so far'}</div></div>
+      <div className="tile good"><div className="tv">{acc.length}</div><div className="tl">Accepted</div><div className="ts">{due.length ? pct(acc.length / due.length) : '—'} of due</div></div>
+      <div className="tile warn"><div className="tv">{all.filter(d => d.status === 'done').length}</div><div className="tl">Submitted, waiting</div></div>
+      <div className="tile bad"><div className="tv">{all.filter(d => d.status === 'returned').length}</div><div className="tl">Returned</div></div>
+      <div className="tile"><div className="row"><Ring p={sc.score} size={46} /><div className="tl">Weighted result</div></div></div>
+      <div className="tile"><div className="tv">{avgR ? avgR.toFixed(1) + '★' : '—'}</div><div className="tl">Average rating</div></div>
+    </div>
+    <div className="row" style={{ margin: '12px 0 6px' }}><Seg value={by} options={[['line', 'Line by line'], ['person', 'By person']]} onChange={setBy} />{by === 'line' && <><input type="text" placeholder="Search deliverable or person" value={q} onChange={e => setQ(e.target.value)} /><select value={st} onChange={e => setSt(e.target.value)}><option value="">All statuses</option>{Object.entries(DST).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select></>}<span className="sp" />
+      <Export name="monthly-deliverables" rows={() => [['Month', 'Deliverable', 'Owner', 'Unit', 'Key result', 'Weight', 'Target', 'Achieved', 'Status', 'Rating', 'Feedback'], ...list.map(d => [MONTHS[d.month - 1], d.title, name(d.owner_position_id), byId(db.org_units, d.unit_id)?.name, byId(db.key_results, d.key_result_id)?.title || '', d.weight ?? '', d.target ?? '', d.actual ?? '', DST[d.status]?.[0] || d.status, d.rating || '', d.feedback || ''])]} /></div>
+    {by === 'line' ? <div className="tw"><table className="t"><thead><tr><th>Month</th><th>Deliverable</th><th>Owner</th><th>Key result</th><th className="n">Weight</th><th className="n">Target</th><th className="n">Achieved</th><th>Status</th><th>Rating</th></tr></thead><tbody>
+      {list.map(d => { const [l, t] = DST[d.status] || [d.status, 'none']; const r = d.target != null && d.actual != null && Number(d.target) ? Number(d.actual) / Number(d.target) : null; return <tr key={d.id}><td>{MONTHS[d.month - 1]}</td><td>{d.title}{d.feedback && <div className="mini">Manager: {d.feedback}</div>}</td><td>{name(d.owner_position_id)}<div className="mini">{us.length > 1 ? byId(db.org_units, d.unit_id)?.name : byId(db.org_units, byId(db.positions, d.owner_position_id)?.org_unit_id)?.name}</div></td><td className="mini">{byId(db.key_results, d.key_result_id)?.title || '—'}</td><td className="n">{d.weight != null ? d.weight + '%' : ''}</td><td className="n">{d.target ?? ''}</td><td className="n">{d.actual ?? ''}{r != null && <div className="mini">{pct(r)}</div>}</td><td><Pill tone={t}>{l}</Pill></td><td>{d.rating ? '★'.repeat(d.rating) : ''}</td></tr>; })}
+      {!list.length && <tr><td colSpan={9} className="note">No deliverables match.</td></tr>}
+      <tr className="g"><td colSpan={7}><b>Total · {list.length} deliverables</b></td><td colSpan={2}><b>{list.filter(d => d.status === 'accepted').length} accepted</b> · {list.filter(d => d.status === 'done').length} submitted · {list.filter(d => d.status === 'returned').length} returned</td></tr>
+    </tbody></table></div>
+    : <div className="tw"><table className="t"><thead><tr><th>Person</th><th className="n">Deliverables</th><th className="n">Due</th><th className="n">Submitted</th><th className="n">Accepted</th><th className="n">Returned</th><th>Weighted result</th></tr></thead><tbody>
+      {people.map(x => <tr key={x.id}><td>{name(x.id)}<div className="mini">{byId(db.org_units, byId(db.positions, x.id)?.org_unit_id)?.name}</div></td><td className="n">{x.n}</td><td className="n">{x.due}</td><td className="n">{x.sub}</td><td className="n">{x.acc}</td><td className="n">{x.ret}</td><td><Bar p={x.score} /> {pct(x.score)}</td></tr>)}
+      <tr className="g"><td><b>Total</b></td><td className="n"><b>{all.length}</b></td><td className="n">{due.length}</td><td className="n">{all.filter(d => d.status === 'done').length}</td><td className="n">{acc.length}</td><td className="n">{all.filter(d => d.status === 'returned').length}</td><td><Bar p={sc.score} /> {pct(sc.score)}</td></tr>
+    </tbody></table></div>}
+    <div className="card" style={{ marginTop: 12 }}><h3>Deliverables by month</h3><BarChart labels={MONTHS.slice(0, Math.max(cm, ...ms))} series={[{ name: 'Due', values: MONTHS.slice(0, Math.max(cm, ...ms)).map((_, i) => delivScore(db, pos, { t: 'M', n: i + 1 }).due), color: 'var(--line2)' }, { name: 'Accepted', values: MONTHS.slice(0, Math.max(cm, ...ms)).map((_, i) => delivScore(db, pos, { t: 'M', n: i + 1 }).accepted), color: 'var(--good)' }]} height={170} /></div>
+  </>;
+}
+
+const AST: Record<string, string> = { Done: 'good', 'In progress': 'warn', Stuck: 'bad', Delayed: 'bad', 'Not started': 'none' };
+/** Weekly work: every activity of the chosen week, line by line, with totals and the 8-week trend. */
+function WeeklyReport({ db, us }: { db: DB; us: string[] }) {
+  const [ws, setWs] = useState(ymd(weekStart(new Date()))); const [q, setQ] = useState(''); const [st, setSt] = useState(''); const [by, setBy] = useState<'line' | 'person'>('line');
+  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name).map(x => x.id));
+  const all = db.activities.filter(a => pos.has(a.owner_position_id) && a.week_start === ws);
+  const list = all.filter(a => (!st || a.status === st) && (!q || (a.title + ' ' + (byId(db.positions, a.owner_position_id)?.holder_name || '')).toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => (byId(db.positions, a.owner_position_id)?.holder_name || '').localeCompare(byId(db.positions, b.owner_position_id)?.holder_name || ''));
+  const s0 = workStats(db, pos, ws); const shift = (n: number) => setWs(ymd(new Date(new Date(ws + 'T00:00:00Z').getTime() + n * 7 * 864e5)));
+  const name = (id: string) => byId(db.positions, id)?.holder_name || '—';
+  const people = Array.from(new Set(all.map(a => a.owner_position_id))).map(id => { const s = workStats(db, new Set([id]), ws); return { id, ...s }; }).sort((a, b) => (b.completion ?? -1) - (a.completion ?? -1));
+  return <>
+    <div className="row" style={{ marginBottom: 10 }}><button className="btn sm" onClick={() => shift(-1)}>‹</button><b>{weekLabel(new Date(ws + 'T00:00:00Z'))}</b><button className="btn sm" onClick={() => shift(1)}>›</button><button className="btn sm" onClick={() => setWs(ymd(weekStart(new Date())))}>This week</button></div>
+    <div className="kpis">
+      <div className="tile"><div className="tv">{s0.total}</div><div className="tl">Activities</div><div className="ts">{s0.people} people</div></div>
+      <div className="tile"><div className="row"><Ring p={s0.completion} size={46} /><div className="tl">Work done</div></div></div>
+      <div className="tile good"><div className="tv">{s0.done}</div><div className="tl">Done</div></div>
+      <div className="tile warn"><div className="tv">{all.filter(a => a.status === 'In progress').length}</div><div className="tl">In progress</div></div>
+      <div className="tile bad"><div className="tv">{s0.stuck}</div><div className="tl">Stuck</div></div>
+      <div className="tile"><div className="tv">{all.filter(a => a.unplanned).length}</div><div className="tl">Unplanned</div></div>
+    </div>
+    <div className="row" style={{ margin: '12px 0 6px' }}><Seg value={by} options={[['line', 'Line by line'], ['person', 'By person']]} onChange={setBy} />{by === 'line' && <><input type="text" placeholder="Search activity or person" value={q} onChange={e => setQ(e.target.value)} /><select value={st} onChange={e => setSt(e.target.value)}><option value="">All statuses</option>{Object.keys(AST).map(k => <option key={k}>{k}</option>)}</select></>}<span className="sp" />
+      <Export name="weekly-activities" rows={() => [['Week', 'Activity', 'Owner', 'Deliverable', 'Status', '% done', 'Due', 'Blocker'], ...list.map(a => [weekLabel(new Date(ws + 'T00:00:00Z')), a.title, name(a.owner_position_id), byId(db.deliverables, a.deliverable_id)?.title || (a.unplanned ? 'Unplanned' : ''), a.status, a.status === 'Done' ? 100 : a.pct ?? 0, a.due_date || '', a.blocker || ''])]} /></div>
+    {by === 'line' ? <div className="tw"><table className="t"><thead><tr><th>Activity</th><th>Owner</th><th>Deliverable</th><th>Due</th><th>Status</th><th>Progress</th><th>Blocker</th></tr></thead><tbody>
+      {list.map(a => { const pc = a.status === 'Done' ? 1 : (Number(a.pct) || 0) / 100; return <tr key={a.id}><td>{a.top ? '★ ' : ''}{a.title}{a.carried_count ? <span className="mini"> · carried ×{a.carried_count}</span> : null}</td><td>{name(a.owner_position_id)}</td><td className="mini">{byId(db.deliverables, a.deliverable_id)?.title || (a.unplanned ? 'Unplanned' : '—')}</td><td className="mini">{a.due_date || ''}</td><td><Pill tone={AST[a.status] || 'none'}>{a.status}</Pill></td><td><Bar p={pc} /> {pct(pc)}</td><td className="mini">{a.blocker || ''}</td></tr>; })}
+      {!list.length && <tr><td colSpan={7} className="note">No activities match.</td></tr>}
+      <tr className="g"><td colSpan={4}><b>Total · {list.length} activities</b></td><td colSpan={3}><b>{list.filter(a => a.status === 'Done').length} done</b> · {list.filter(a => a.status === 'In progress').length} in progress · {list.filter(a => a.status === 'Stuck').length} stuck · average {pct(list.length ? sum(list.map(a => a.status === 'Done' ? 1 : (Number(a.pct) || 0) / 100)) / list.length : null)}</td></tr>
+    </tbody></table></div>
+    : <div className="tw"><table className="t"><thead><tr><th>Person</th><th className="n">Activities</th><th className="n">Done</th><th className="n">Stuck</th><th>Work done</th><th>Updated on time</th></tr></thead><tbody>
+      {people.map(x => <tr key={x.id}><td>{name(x.id)}<div className="mini">{byId(db.org_units, byId(db.positions, x.id)?.org_unit_id)?.name}</div></td><td className="n">{x.total}</td><td className="n">{x.done}</td><td className="n">{x.stuck}</td><td><Bar p={x.completion} /> {pct(x.completion)}</td><td>{x.onTime ? <Pill tone="good">yes</Pill> : <Pill tone="warn">no</Pill>}</td></tr>)}
+      <tr className="g"><td><b>Total</b></td><td className="n"><b>{s0.total}</b></td><td className="n">{s0.done}</td><td className="n">{s0.stuck}</td><td><Bar p={s0.completion} /> {pct(s0.completion)}</td><td>{s0.onTime}/{s0.people}</td></tr>
+    </tbody></table></div>}
+    <WorkReport db={db} us={us} />
   </>;
 }
 
@@ -244,24 +317,25 @@ function CosBreakdown({ db, us, months, name }: { db: DB; us: string[]; months: 
 }
 
 export default function Reports() {
-  const { db, unit, can, units, allUnits } = useData(); const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') || 'summary'; const [p, setP] = usePeriod();
+  const { db, unit, can, units, allUnits, setAllUnits } = useData(); const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') || 'summary'; const [p, setP] = usePeriod();
   if (!db || !unit) return null;
   const scope = can('seeGroup') && allUnits ? 'group' : 'unit';
   const us = scope === 'group' ? units.map(u => u.id) : [unit]; const name = scope === 'group' ? 'All units combined' : byId(db.org_units, unit)?.name || '';
-  const tabs: [string, string][] = [['summary', 'Summary'], ['okr', 'OKRs & goals'], ['org', 'Organisation & people'], ['work', 'Weekly & monthly work'], ['fin', 'Financial']];
+  const tabs: [string, string][] = [['summary', 'Summary'], ['okr', 'OKRs & goals'], ['org', 'Organisation & people'], ['monthly', 'Monthly deliverables'], ['weekly', 'Weekly activities'], ['fin', 'Financial']];
   return <Page title="Reports" desc="Operational, OKR, organisational, work and financial performance — for one unit or all units combined." help={<>
     <p><b>Summary</b> — each unit's OKR score, key-result status, revenue and budget use, deliverables and average person result for the period.</p>
     <p><b>OKRs & goals</b> — score by quarter and pillar, then every goal, objective or key result with target, actual and status (pace-adjusted while a period is running).</p>
     <p><b>Organisation & people</b> — every unit, department and division with its score per quarter, people and deliverables; people by performance band.</p>
-    <p><b>Weekly & monthly work</b> — activity completion and how many people update each week, monthly deliverables due versus accepted, open blockers.</p>
+    <p><b>Monthly deliverables</b> — every deliverable of the period line by line (owner, key result, weight, target, achieved, status, rating) or by person, with totals.</p><p><b>Weekly activities</b> — every activity of the chosen week line by line or by person, with totals, then the 8-week trend, departments and open blockers.</p>
     <p><b>Financial</b> — income statement (profitability), cash flow (cash positivity), monthly trends and plan vs actual by product group and budget line.</p>
     <p>Every table can be exported to CSV.</p></>}>
-    <div className="cmdbar"><UnitPicker allowAll /><span className="sp" />{tab !== 'fin' && tab !== 'work' && <PeriodPicker value={p} onChange={setP} />}</div>
+    <div className="cmdbar"><UnitPicker allowAll /><span className="sp" />{tab !== 'fin' && tab !== 'weekly' && <PeriodPicker value={p} onChange={setP} />}</div>
     <div className="tabs" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setSp({ tab: k })}>{l}</button>)}</div>
     {tab === 'summary' && <Summary db={db} us={us} p={p} />}
     {tab === 'okr' && <OkrReport db={db} us={us} p={p} />}
     {tab === 'org' && <OrgReport db={db} us={us} p={p} />}
-    {tab === 'work' && <WorkReport db={db} us={us} />}
-    {tab === 'fin' && <Financial db={db} us={us} name={name} />}
+    {(tab === 'monthly' || tab === 'work') && <MonthlyReport db={db} us={us} p={p} />}
+    {tab === 'weekly' && <WeeklyReport db={db} us={us} />}
+    {tab === 'fin' && (us.some(u => db.plan_lines.some(l => l.unit_id === u) || db.actuals.some(a => a.unit_id === u)) ? <Financial db={db} us={us} name={name} /> : <Empty>{name} has no revenue or budget plan, so there is no financial report for it.{can('seeGroup') && <> <button className="btn sm pri" onClick={() => setAllUnits(true)}>See all units combined</button></>}</Empty>)}
   </Page>;
 }
