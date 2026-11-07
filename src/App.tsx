@@ -22,6 +22,7 @@ import { RecordPage } from './pages/work/Record';
 import { OurStrategy, MyInsights, StrategicPlan } from './pages/work/Strategy';
 import { RescopeEditor, ResourcesMonthly, Portfolio, Backup, ErpReplan } from './pages/studio/More';
 import { Search } from './lib/search';
+import Processes from './pages/Processes';
 import { Overview, Alignment, WhoDoesWhat } from './pages/insights/Insights';
 import { Monitor, StrategyBuilder, Scorecards, Framework, Audit } from './pages/studio/Studio';
 
@@ -46,7 +47,7 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
       const inbox = db.objectives.filter(o => o.status === 'Submitted' && ids.has(o.owner_position_id)).length + db.deliverables.filter(d => d.status === 'done' && ids.has(d.owner_position_id)).length + db.week_reviews.filter(r => ids.has(r.position_id) && r.submitted_at && !r.feedback_at).length + db.scorecards.filter(s => ids.has(s.position_id) && s.status === 'Discuss').length;
       const unread = db.messages.filter(m => m.to_user === me.user_id && !m.read_at).length;
       const items: Item[] = [{ to: '/today', label: 'Today', icon: I.today }, ...[{ k: 'strategy', to: '/strategy', label: 'How we cascade', icon: I.align }, { k: 'plan', to: '/plan', label: 'Plan', icon: I.plan }, { k: 'record', to: '/record', label: 'Record', icon: I.deliv },
-        { k: 'inbox', to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { k: 'me', to: '/me', label: 'My performance', icon: I.me }].filter(x => W.work(x.k))];
+        { k: 'processes', to: '/processes', label: 'Processes', icon: I.res }, { k: 'inbox', to: '/inbox', label: 'Inbox', icon: I.inbox, badge: (lead ? inbox : 0) + unread }, { k: 'me', to: '/me', label: 'My performance', icon: I.me }].filter(x => W.work(x.k))];
       return [{ items }];
     }
     if (win === 'insights' && !W.fullInsights) return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.overview }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }] }];
@@ -129,6 +130,7 @@ function Shell() {
         <Route path="/goals" element={<Navigate to="/strategy" replace />} />
         <Route path="/goals/new" element={<NewObjective />} />
         <Route path="/deliverables" element={<Navigate to="/plan?tab=deliverables" replace />} />
+        <Route path="/processes" element={ok(W.work('processes'), <Processes />)} />
         <Route path="/inbox" element={ok(W.work('inbox'), <InboxPage />)} />
         <Route path="/me" element={<Me />} />
         {/* Insights window */}

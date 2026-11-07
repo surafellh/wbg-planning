@@ -3,8 +3,10 @@ import { sb, fetchAll } from './supabase';
 import { setCalendar, lineScope, type LineScope } from './calc';
 
 export const TABLES = ['org_units', 'positions', 'profiles', 'app_settings', 'group_pillars', 'group_goals', 'unit_pillars', 'unit_goals', 'objectives', 'key_results', 'kr_targets', 'kr_plan_links', 'check_ins',
-  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims', 'kr_month_targets', 'strategy_statements', 'week_reviews', 'messages', 'pmo_projects', 'cash_actual', 'cash_weekly', 'fund_months', 'need_schedule', 'need_plan', 'pmo_progress', 'project_phases', 'deliverable_files'] as const;
-const ORDER: Record<string, string> = { app_settings: 'key', cash_values: 'item_id', funds: 'unit_id', need_priority: 'unit_id', plan_status: 'unit_id', kr_targets: 'kr_id', kpi_values: 'kpi_id', kr_plan_links: 'kr_id', kr_month_targets: 'kr_id', strategy_statements: 'unit_id', cash_actual: 'unit_id', cash_weekly: 'unit_id', fund_months: 'unit_id', need_plan: 'unit_id', pmo_progress: 'project_id', project_phases: 'sort', deliverable_files: 'created_at' };
+  'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims', 'kr_month_targets', 'strategy_statements', 'week_reviews', 'messages', 'pmo_projects', 'cash_actual', 'cash_weekly', 'fund_months', 'need_schedule', 'need_plan', 'pmo_progress', 'project_phases', 'deliverable_files', 'process_defs', 'process_steps', 'process_kpis', 'process_cases', 'process_case_log'] as const;
+/** Tables that may not exist yet in every database: a missing one loads as empty instead of stopping the app. */
+const OPTIONAL = new Set(['process_defs', 'process_steps', 'process_kpis', 'process_cases', 'process_case_log']);
+const ORDER: Record<string, string> = { app_settings: 'key', cash_values: 'item_id', funds: 'unit_id', need_priority: 'unit_id', plan_status: 'unit_id', kr_targets: 'kr_id', kpi_values: 'kpi_id', kr_plan_links: 'kr_id', kr_month_targets: 'kr_id', strategy_statements: 'unit_id', cash_actual: 'unit_id', cash_weekly: 'unit_id', fund_months: 'unit_id', need_plan: 'unit_id', pmo_progress: 'project_id', project_phases: 'sort', deliverable_files: 'created_at', process_defs: 'sort', process_steps: 'sort', process_kpis: 'sort', process_cases: 'started_at', process_case_log: 'at' };
 export type Row = Record<string, any>;
 export type DB = { [K in (typeof TABLES)[number]]: Row[] } & { settings: Record<string, any>; cache: Map<string, any> };
 
@@ -47,7 +49,7 @@ export function DataProvider({ user, children }: { user: any; children: ReactNod
   const reload = useCallback(async (tables?: string[]) => {
     try {
       const list = (tables && tables.length ? tables : TABLES) as string[];
-      const got = await Promise.all(list.map(t => fetchAll(t, ORDER[t] || 'id')));
+      const got = await Promise.all(list.map(t => OPTIONAL.has(t) ? fetchAll(t, ORDER[t] || 'id').catch(() => [] as any[]) : fetchAll(t, ORDER[t] || 'id')));
       setDb(prev => {
         const next: any = { ...(prev || {}) };
         list.forEach((t, i) => { next[t] = got[i]; });
@@ -123,7 +125,7 @@ export const STUDIO_ITEMS: Record<string, string[]> = {
   replan: ['super_admin', 'group_strategy', 'unit_head', 'planning_head'],
 };
 export const STUDIO_LABELS: Record<string, string> = { monitor: 'Process monitor', strategy: 'Strategy builder', okr: 'Objective planner', targets: 'Targets & progress', revenue: 'Revenue plan', budget: 'Budget', resources: 'Resources', rescope: 'Rescope & versions', calendar: 'Planning calendar', scorecards: 'Scorecards', projects: 'Project portfolio', replan: 'ERP OKR replan' };
-export const WORK_PAGES: Record<string, string> = { strategy: 'How we cascade', plan: 'Plan', record: 'Record', inbox: 'Inbox', me: 'My performance' };
+export const WORK_PAGES: Record<string, string> = { strategy: 'How we cascade', plan: 'Plan', record: 'Record', processes: 'Processes', inbox: 'Inbox', me: 'My performance' };
 /** Optional modules (Studio → Configuration → Modules). */
 export function moduleOn(db: DB | null, k: string) { const m = db?.settings.modules || {}; return m[k]?.enabled !== false; }
 /** Which windows a role can open (configurable in Studio → Framework & rules). */
