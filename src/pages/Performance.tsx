@@ -72,9 +72,9 @@ function OrgNode({ db, id, depth, p, onOpen }: { db: DB; id: string; depth: numb
 }
 
 export function PerfOrg() {
-  const { db, unit } = useData(); const [p, setP] = usePeriod(); const [open, setOpen] = useState<string | null>(null); const [person, setPerson] = useState<Row | null>(null);
+  const { db, unit, line } = useData(); const [p, setP] = usePeriod(); const [open, setOpen] = useState<string | null>(null); const [person, setPerson] = useState<Row | null>(null);
   if (!db || !unit) return null;
-  const all = Array.from(subtreeIds(db, unit)).map(id => byId(db.org_units, id)!).filter(u => u.kind !== 'unit');
+  const all = Array.from(subtreeIds(db, unit)).map(id => byId(db.org_units, id)!).filter(u => u.kind !== 'unit' && (!line || line.orgs.has(u.id)));
   const ranked = all.map(u => ({ u, s: orgScoreOwn(db, u.id, p) })).filter(x => x.s != null).sort((a, b) => (b.s ?? -1) - (a.s ?? -1));
   return <Page title="Organisation" desc="Scores for the unit, its departments and divisions — click any one for its objectives, people and trend." help={PERF_HELP(db)}>
     <Cmd right={<PeriodPicker value={p} onChange={setP} />} />
@@ -88,7 +88,7 @@ export function PerfOrg() {
 }
 
 export function PerfPeople({ mine }: { mine?: boolean }) {
-  const { db, unit, me } = useData(); const [q, setQ] = useState(''); const [p, setP] = usePeriod(); const [pick, setPick] = useState<Row | null>(null); const [org, setOrg] = useState('');
+  const { db, unit, me, line } = useData(); const [q, setQ] = useState(''); const [p, setP] = usePeriod(); const [pick, setPick] = useState<Row | null>(null); const [org, setOrg] = useState('');
   if (!db || !unit || !me) return null;
   if (mine) { const r = personResult(db, me, p); const o = byId(db.org_units, me.org_unit_id);
     return <Page title="My performance" desc="Your result: your organisation's score plus your own deliverables, for the period you choose." help={PERF_HELP(db)}>
@@ -98,13 +98,13 @@ export function PerfPeople({ mine }: { mine?: boolean }) {
       <button className="btn" onClick={() => setPick(me)}>See the details</button> <Link to="/deliverables">My deliverables →</Link>
       {pick && <PersonDrawer pos={pick} p={p} onClose={() => setPick(null)} />}</Page>; }
   const ids = org ? subtreeIds(db, org) : null;
-  const list: Row[] = db.positions.filter(x => x.unit_id === unit && x.holder_name && (!ids || ids.has(x.org_unit_id))).filter(x => !q || (x.holder_name || '').toLowerCase().includes(q.toLowerCase()) || x.title.toLowerCase().includes(q.toLowerCase()));
+  const list: Row[] = db.positions.filter(x => x.unit_id === unit && x.holder_name && (!ids || ids.has(x.org_unit_id)) && (!line || line.people.has(x.id))).filter(x => !q || (x.holder_name || '').toLowerCase().includes(q.toLowerCase()) || x.title.toLowerCase().includes(q.toLowerCase()));
   const rows = list.map(x => ({ x, r: personResult(db, x, p) })).sort((a, b) => (b.r.s - a.r.s) || ((b.r.R ?? -1) - (a.r.R ?? -1)));
-  const orgs = Array.from(subtreeIds(db, unit)).map(id => byId(db.org_units, id)!).filter(u => u.kind !== 'unit');
+  const orgs = Array.from(subtreeIds(db, unit)).map(id => byId(db.org_units, id)!).filter(u => u.kind !== 'unit' && (!line || line.orgs.has(u.id)));
   const bands = ['Achieved', 'Well performed', 'Partially achieved', 'Under performed'].map(b => ({ label: b, n: rows.filter(r => bandOf(r.r.R, db) === b).length, tone: b === 'Achieved' || b === 'Well performed' ? 'good' : b === 'Partially achieved' ? 'warn' : 'bad' }));
   return <Page title="People" desc="Each person's result for the period — click a person for deliverables, key results and trend." help={PERF_HELP(db)}>
     <ViewTabs items={[['/insights/people', 'Results', 'Each person’s result and band for the period'], ['/insights/people-work', 'Workload', 'Who is doing what: objectives, deliverables and this week’s activities per person']]} />
-    <Cmd right={<><select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">Whole unit</option>{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select><input type="text" placeholder="Find a person" value={q} onChange={e => setQ(e.target.value)} /><PeriodPicker value={p} onChange={setP} /></>} />
+    <Cmd right={<><select value={org} onChange={e => setOrg(e.target.value)} aria-label="Department"><option value="">{line ? byId(db.org_units, me.org_unit_id)?.name + ' and below' : 'Whole unit'}</option>{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select><input type="text" placeholder="Find a person" value={q} onChange={e => setQ(e.target.value)} /><PeriodPicker value={p} onChange={setP} /></>} />
     <div className="card" style={{ marginBottom: 12 }}><h4>Bands · {periodLabel(p)}</h4><StatusStack counts={bands} /></div>
     {!rows.length ? <Empty>No people here.</Empty> : <div className="tw"><table className="t"><thead><tr><th>Person</th><th>Organisation</th><th data-tip="Which organisation's score counts for this person (the one they lead, or the one they sit in) and how much it weighs.">Organisation part</th><th className="n">Score</th><th className="n">Personal</th><th>Result</th><th>Band</th><th className="n">To HR</th></tr></thead><tbody>
       {rows.map(({ x, r }) => <tr key={x.id} className="click" onClick={() => setPick(x)}><td><b>{x.holder_name}</b><div className="note">{x.title} · {ROLE_NAME[x.role as keyof typeof ROLE_NAME]}</div></td><td>{byId(db.org_units, x.org_unit_id)?.name}</td><td className="mini">{r.orgLabel}<div>weight {Math.round(r.s * 100)}%</div></td>

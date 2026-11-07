@@ -9,7 +9,7 @@ import { PersonDrawer } from '../Performance';
 import { Thread } from '../../lib/social';
 
 export function Overview() {
-  const { db, unit, can, units, allUnits } = useData(); const [p, setP] = usePeriod(); if (!db || !unit) return null; const u = byId(db.org_units, unit)!; const all = can('seeGroup') && allUnits;
+  const { db, unit, can, units, allUnits, line } = useData(); const [p, setP] = usePeriod(); if (!db || !unit) return null; const u = byId(db.org_units, unit)!; const all = can('seeGroup') && allUnits;
   return <Page title="Overview" desc={all ? 'Operational and financial performance across all units.' : `${u.name}: operational and financial performance.`} help={<>
     <h3>OKR score</h3><p>The average score of a unit's own objectives for the period chosen. Each objective's score is the weighted progress of its key results against the period target, blended (by its "own share") with the weighted score of the department and division objectives below it. So the unit score reflects the whole cascade, organisation first.</p>
     <h3>Key results</h3><p>All organisation key results — unit, department and division — with their status judged on pace: early in a quarter, less is expected. "Updated" shows how many check-in key results were updated in the last 30 days.</p>
@@ -17,7 +17,7 @@ export function Overview() {
     <div className="cmdbar"><UnitPicker allowAll /><span className="sp" /><PeriodPicker value={p} onChange={setP} /></div>
     {all && <GroupBoard db={db} p={p} />}
     {!all && <Operational db={db} unit={unit} p={p} />}
-    <div style={{ marginTop: 12 }}><Financial db={db} units={all ? units.map(x => x.id) : [unit]} label={all ? 'All units combined' : u.name} /></div>
+    {!line && <div style={{ marginTop: 12 }}><Financial db={db} units={all ? units.map(x => x.id) : [unit]} label={all ? 'All units combined' : u.name} /></div>}
   </Page>;
 }
 
@@ -51,11 +51,11 @@ function ObjDrawer({ o, p, onClose }: { o: Row; p: Period; onClose: () => void }
   </Drawer>;
 }
 export function Alignment() {
-  const { db, unit } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [ind, setInd] = useState<'org' | 'all'>('org'); const [q, setQ] = useState(''); const [pick, setPick] = useState<Row | null>(null);
+  const { db, unit, line } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [ind, setInd] = useState<'org' | 'all'>('org'); const [q, setQ] = useState(''); const [pick, setPick] = useState<Row | null>(null);
   if (!db || !unit) return null;
-  const show = (o: Row) => ind === 'all' || o.level !== 'individual';
+  const show = (o: Row) => (ind === 'all' || o.level !== 'individual') && (!line || line.objs.has(o.id));
   const match = (o: Row) => !q || o.text.toLowerCase().includes(q.toLowerCase()) || posName(db, o.owner_position_id).toLowerCase().includes(q.toLowerCase());
-  const tree = unitGoalsTree(db, unit); const objs = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived');
+  const tree = unitGoalsTree(db, unit); const objs = db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived' && (!line || line.objs.has(o.id)));
   const linked = objs.filter(o => o.unit_goal_id || o.parent_objective_id || o.parent_kr_id).length;
   const loose = objs.filter(o => !o.unit_goal_id && !o.parent_objective_id && !o.parent_kr_id && show(o));
   const ppl = new Set(objs.map(o => o.owner_position_id)).size;
@@ -63,8 +63,9 @@ export function Alignment() {
     <ViewTabs items={[['/insights/map', 'Strategy map', 'Pillar → goal → objectives → key results, with progress'], ['/insights/alignment', 'Cascade & owners', 'How objectives cascade, who owns each one and how much it contributes']]} />
     <Cmd right={<><input type="text" placeholder="Find an objective or person" value={q} onChange={e => setQ(e.target.value)} /><Seg value={ind} options={[['org', 'Organisation only'], ['all', 'Include personal']]} onChange={setInd} /><PeriodPicker value={p} onChange={setP} /></>} />
     <div className="kpis"><div className="tile"><div className="tv">{objs.length}</div><div className="tl">{t('objective', true)}</div></div><div className="tile"><div className="tv">{pct(objs.length ? linked / objs.length : null)}</div><div className="tl">Linked to the strategy</div></div><div className="tile"><div className="tv">{ppl}</div><div className="tl">People owning {t('objective', true).toLowerCase()}</div></div><div className="tile" style={{ gridColumn: 'span 2' }}><div className="tl" style={{ marginBottom: 6 }}>{t('key_result', true)} · {periodLabel(p)}</div><StatusStack counts={statusCounts(db, unitKrs(db, unit), p)} compact /></div></div>
-    {tree.map(({ p: pil, goals }) => <section key={pil.id} className="tpil"><div className="tpilh"><Ring p={pillarScore(db, pil.id, p)} size={34} /><b>{pil.code} · {pil.name}</b></div>
+    {tree.filter(({ goals }) => !line || goals.some(g => db.objectives.some(o => o.unit_goal_id === g.id && show(o)))).map(({ p: pil, goals }) => <section key={pil.id} className="tpil"><div className="tpilh"><Ring p={pillarScore(db, pil.id, p)} size={34} /><b>{pil.code} · {pil.name}</b></div>
       {goals.map(g => { const os = db.objectives.filter(o => o.unit_goal_id === g.id && show(o)).filter(o => match(o) || db.objectives.some(c => c.parent_objective_id === o.id && match(c)));
+        if (line && !os.length) return null;
         return <div key={g.id} className="tgoal"><div className="tgoalh"><Ring p={goalScore(db, g.id, p)} size={28} /><span>{g.code} {g.name}</span>{byId(db.group_goals, g.group_goal_id) && <small>↗ {byId(db.group_goals, g.group_goal_id)?.name}</small>}</div>
           {os.map(o => <ObjNode key={o.id} o={o} p={p} depth={0} show={show} onPick={setPick} />)}{!os.length && <p className="note" style={{ marginLeft: 36 }}>Nothing cascades from this {t('goal').toLowerCase()} yet.</p>}</div>; })}</section>)}
     {loose.length > 0 && <section className="tpil"><div className="tpilh warn"><b>Not linked to the strategy · {loose.length}</b></div>{loose.filter(match).map(o => <ObjNode key={o.id} o={o} p={p} depth={0} show={show} onPick={setPick} />)}</section>}
@@ -74,10 +75,10 @@ export function Alignment() {
 
 /* ---------- Who is doing what ---------- */
 export function WhoDoesWhat() {
-  const { db, unit } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [pick, setPick] = useState<Row | null>(null); const [sort, setSort] = useState<'name' | 'load' | 'result'>('load');
+  const { db, unit, line } = useData(); const { t } = useTerms(); const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [pick, setPick] = useState<Row | null>(null); const [sort, setSort] = useState<'name' | 'load' | 'result'>('load');
   if (!db || !unit) return null;
   const ids = subtreeIds(db, org || unit); const wk = ymd(weekStart(new Date()));
-  const rows = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name).map(x => {
+  const rows = db.positions.filter(x => ids.has(x.org_unit_id) && x.holder_name && (!line || line.people.has(x.id))).map(x => {
     const objs = db.objectives.filter(o => o.owner_position_id === x.id); const krs = db.key_results.filter(k => k.owner_position_id === x.id);
     const pm = periodMonths(p); const dels = db.deliverables.filter(d => d.owner_position_id === x.id && pm.includes(d.month) && (p.full || d.month <= curMonth()) && d.status !== 'removed'); const acts = db.activities.filter(a => a.owner_position_id === x.id && a.week_start === wk);
     const r = personResult(db, x, p);
