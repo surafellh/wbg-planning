@@ -224,6 +224,22 @@ export function orgScore(db: DB, orgId: string | null | undefined, p: Period = c
 export const isOrgObj = (o: Row) => o.level !== 'individual' && o.status !== 'Archived';
 export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return avg(db.objectives.filter(o => o.org_unit_id === orgId && isOrgObj(o) && liveObj(o)).map(o => objScore(db, o, p))); }
 /** Whole-subtree score (unit with all its departments and divisions) — used for rankings. */
+/** Line scope for department heads, division heads and team members: the organisation they sit in and everything below it,
+    plus the objectives above that their line delivers (not the sibling departments' objectives). null = no restriction. */
+export const LINE_ROLES = ['dept_head', 'div_head', 'employee'];
+export type LineScope = { orgs: Set<string>; objs: Set<string>; people: Set<string> };
+export function lineScope(db: DB, me: Row | null, role: string): LineScope | null {
+  if (!me || !LINE_ROLES.includes(role)) return null;
+  const orgs = subtreeIds(db, me.org_unit_id);
+  const objs = new Set<string>(db.objectives.filter(o => orgs.has(o.org_unit_id)).map(o => o.id));
+  // walk up from every objective of the line to the objectives it delivers
+  const krObj = new Map<string, string>(db.key_results.map(k => [k.id, k.objective_id]));
+  const byIdO = new Map<string, Row>(db.objectives.map(o => [o.id, o]));
+  let frontier = Array.from(objs);
+  while (frontier.length) { const next: string[] = []; frontier.forEach(id => { const o = byIdO.get(id); if (!o) return; const up = o.parent_objective_id || (o.parent_kr_id && krObj.get(o.parent_kr_id)); if (up && !objs.has(up)) { objs.add(up); next.push(up); } }); frontier = next; }
+  const people = new Set<string>(role === 'employee' ? [me.id] : db.positions.filter(x => orgs.has(x.org_unit_id)).map(x => x.id));
+  return { orgs, objs, people };
+}
 export function subtreeIds(db: DB, id: string) { const ids = new Set<string>([id]); let grew = true; while (grew) { grew = false; db.org_units.forEach(u => { if (u.parent_id && ids.has(u.parent_id) && !ids.has(u.id)) { ids.add(u.id); grew = true; } }); } return ids; }
 export function orgShare(db: DB, level: string) { const w = db.settings.org_weights || { unit: 70, department: 60, division: 50, employee: 30 }; return Number(w[level === 'group' ? 'unit' : level] ?? 30) / 100; }
 export function delivScore(db: DB, posIds: Set<string>, p: Period) {

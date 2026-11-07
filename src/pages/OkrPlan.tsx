@@ -175,16 +175,18 @@ function HeadView({ myOrg, p, extra, onKr, onNew }: { myOrg: string; p: Period; 
   const loose = mine.filter(o => !parentOf(o));
   const setW = (o: Row, v: number | null) => save(() => sb.from('objectives').update({ weight_to_parent: v }).eq('id', o.id), ['objectives'], 'Weight saved');
   return <>
-    <p className="note">Your objectives and the objectives directly above them{above ? ` (${above.name})` : ''}, with the other objectives that contribute to the same parent — so you can see what share of the parent each one carries. Only your own rows can be changed here; switch to "Whole unit" for everything.</p>
+    <p className="note">Your objectives and the objectives directly above them{above ? ` (${above.name})` : ''}, and what share of each one your objectives carry (other organisations' objectives under the same parent are counted together, not listed). Only your own rows can be changed here.</p>
     {parents.map(pid => { const P = byId(db.objectives, pid)!; if (!P) return null; const kids = childObjectives(db, pid).filter(c => c.level !== 'individual'); const hasKrs = krsOf(db, pid).length > 0; const own = hasKrs && kids.length ? ownShare(db, P) : 0; const tw = sum(kids.map(c => Number(c.weight_to_parent) || 0)) || kids.length;
       const viaKr = mine.filter(o => o.parent_kr_id && byId(db.key_results, o.parent_kr_id)?.objective_id === pid);
       return <section className="pil" key={pid}><div className="pilh">Above you · {byId(db.org_units, P.org_unit_id)?.name}</div>
         <div className="card" style={{ marginTop: 8 }}><div className="row"><b style={{ flex: 1 }}>{P.text}</b><span className="mini">score {pct(objScore(db, P, p))}</span></div>
           <div className="mini">{hasKrs && kids.length ? `Its score: ${own}% from its own key results · ${100 - own}% from the objectives below (set by its owner for this objective)` : kids.length ? 'Its score comes entirely from the objectives below' : 'Its score comes from its own key results'}</div>
           {kids.length > 0 && <div className="tw" style={{ marginTop: 8 }}><table className="t"><thead><tr><th>Objective that contributes</th><th>Organisation</th><th className="n" data-tip="Weight of this objective among those under the same parent. Together they should add up to 100%.">Weight</th><th className="n" data-tip="How much of the parent's score this objective carries: (100% − own share) × weight.">Share of parent</th><th className="n">Score</th></tr></thead><tbody>
-            {kids.map(c => { const isMine = c.org_unit_id === myOrg; const w = Number(c.weight_to_parent) || (Number(c.weight_to_parent) === 0 ? 0 : 100 / kids.length);
+            {kids.filter(c => c.org_unit_id === myOrg).map(c => { const isMine = c.org_unit_id === myOrg; const w = Number(c.weight_to_parent) || (Number(c.weight_to_parent) === 0 ? 0 : 100 / kids.length);
               return <tr key={c.id} className={isMine ? 'b' : ''}><td>{c.text}{isMine && <Pill tone="info">yours</Pill>}</td><td className="mini">{byId(db.org_units, c.org_unit_id)?.name}</td>
                 <td className="n">{isMine ? <NumIn value={c.weight_to_parent} w={64} onChange={v => setW(c, v)} /> : `${fmt(Number(c.weight_to_parent) || 0)}%`}</td><td className="n">{pct((100 - own) / 100 * w / tw)}</td><td className="n">{pct(objScore(db, c, p))}</td></tr>; })}
+            {(() => { const others = kids.filter(c => c.org_unit_id !== myOrg); if (!others.length) return null; const ow = sum(others.map(c => Number(c.weight_to_parent) || (Number(c.weight_to_parent) === 0 ? 0 : 100 / kids.length)));
+              return <tr className="mini"><td>Other organisations' objectives ({others.length})</td><td className="mini">not shown — outside your line</td><td className="n">{fmt(ow)}%</td><td className="n">{pct((100 - own) / 100 * ow / tw)}</td><td /></tr>; })()}
             <tr className="mini"><td colSpan={2}>Total</td><td className="n">{Math.round(sum(kids.map(c => Number(c.weight_to_parent) || 0))) !== 100 ? <Pill tone="warn">{fmt(sum(kids.map(c => Number(c.weight_to_parent) || 0)))}%</Pill> : '100%'}</td><td className="n">{pct((100 - own) / 100)}</td><td /></tr>
           </tbody></table></div>}
           {viaKr.length > 0 && <p className="mini">Also delivering its key results: {viaKr.map(o => o.text).join(' · ')}</p>}
@@ -196,12 +198,12 @@ function HeadView({ myOrg, p, extra, onKr, onNew }: { myOrg: string; p: Period; 
 }
 
 export default function OkrPlan() {
-  const { db, unit, me } = useData(); const save = useSave();
+  const { db, unit, me, line } = useData(); const save = useSave();
   const isDeptHead = !!me && ['department', 'division'].includes(me.level) && me.role !== 'employee';
   const [p, setP] = usePeriod(); const [org, setOrg] = useState(() => isDeptHead ? me!.org_unit_id : ''); const [simple, setSimple] = useState<'mine' | 'all'>(isDeptHead ? 'mine' : 'all'); const [om, setOm] = useState<Row | null>(null); const [gm, setGm] = useState<Row | null>(null); const [km, setKm] = useState<Row | null>(null); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
-  const headMode = isDeptHead && simple === 'mine' && me!.unit_id === unit; const parentOrg = me ? byId(db.org_units, me.org_unit_id)?.parent_id : null;
+  const headMode = isDeptHead && (simple === 'mine' || !!line) && me!.unit_id === unit; const parentOrg = me ? byId(db.org_units, me.org_unit_id)?.parent_id : null;
   const newUnder = (pid: string | null) => setOm({ unit_id: unit, org_unit_id: me!.org_unit_id, link: 'obj', parent_objective_id: pid || '', owner_position_id: me!.id });
   const unitOrg = unit;
   const krW = (oid: string) => sum(krsOf(db, oid).map(k => Number(k.weight) || 0));
@@ -224,7 +226,7 @@ export default function OkrPlan() {
       <li><b>Submit.</b> The OKR plan goes to Group Strategy, who approve it or return it with a note.</li></ol>
     <p>Pills warn when weights do not add up to 100%. Click a key result to see its detail; use Edit on it there via its objective.</p>
     <p>Objectives brought over from the ERP keep their ERP status; review and link the ones listed under "Not linked to a goal yet".</p></>}>
-    <Cmd right={<>{isDeptHead && <Seg value={simple} options={[['mine', 'Above me and mine'], ['all', 'Whole unit']]} onChange={setSimple} />}{!headMode && <OrgFilter value={org} onChange={setOrg} />}<PeriodPicker value={p} onChange={setP} />{!headMode && <Link className="btn" to="/goals/new">Guided new objective</Link>}<button className="btn pri" onClick={() => headMode ? newUnder(null) : setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
+    <Cmd right={<>{isDeptHead && !line && <Seg value={simple} options={[['mine', 'Above me and mine'], ['all', 'Whole unit']]} onChange={setSimple} />}{!headMode && <OrgFilter value={org} onChange={setOrg} />}<PeriodPicker value={p} onChange={setP} />{!headMode && <Link className="btn" to="/goals/new">Guided new objective</Link>}<button className="btn pri" onClick={() => headMode ? newUnder(null) : setOm({ unit_id: unit, org_unit_id: unitOrg, unit_goal_id: '', owner_position_id: null })}>+ Objective</button></>} />
     <StatusBar unit={unit} kind="okr" label="OKR plan 2026/27" />
     {issues.length > 0 && <div className="banner warn">{issues.length} objective{issues.length > 1 ? 's have' : ' has'} weights that do not add up to 100%.</div>}
     {!headMode && !tree.length && isFunctionUnit(db, unit) && <Empty>{byId(db.org_units, unit)?.name} is a corporate function: its objectives link straight to the Group goals. Use <b>+ Objective</b> and pick the Group goal it delivers.</Empty>}

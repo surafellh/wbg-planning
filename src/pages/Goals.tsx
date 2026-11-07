@@ -79,8 +79,8 @@ export function KrRow({ k, p, onOpen, color }: { k: Row; p: Period; onOpen: (id:
 
 export function WeightChip({ w, of }: { w: number; of: string }) { return <span className="wchip" data-tip={`Carries ${fmt(w)}% of ${of}`}><i><b style={{ width: Math.min(100, w) + '%' }} /></i>{fmt(w)}% of {of}</span>; }
 export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; onKr: (id: string) => void; depth?: number; extra?: (o: Row) => React.ReactNode }) {
-  const { db } = useData(); const [open, setOpen] = useState(depth < 1); if (!db) return null;
-  const ks = krsOf(db, o.id); const kids = childObjectives(db, o.id).concat(db.objectives.filter(c => c.parent_kr_id && c.status !== 'Archived' && ks.some(k => k.id === c.parent_kr_id)));
+  const { db, line } = useData(); const [open, setOpen] = useState(depth < 1); if (!db) return null;
+  const ks = krsOf(db, o.id); const kids = childObjectives(db, o.id).concat(db.objectives.filter(c => c.parent_kr_id && c.status !== 'Archived' && ks.some(k => k.id === c.parent_kr_id))).filter(c => !line || line.objs.has(c.id));
   const org = byId(db.org_units, o.org_unit_id); const st = objState(db, o, p); const below = o.parent_objective_id || o.parent_kr_id;
   const own = ks.length && kids.length ? ownShare(db, o) : null;
   return <div className="obj">
@@ -91,7 +91,7 @@ export function ObjCard({ o, p, onKr, depth = 0, extra }: { o: Row; p: Period; o
     {own != null && <div className="mini" style={{ margin: '6px 0 0 50px' }}>Score = <b>{own}%</b> own key results + <b>{100 - own}%</b> objectives below</div>}
     {ks.length > 1 && <div style={{ marginLeft: 50 }}><WeightSplit label="Key results" parts={ks.map(k => ({ name: k.title, w: k.weight }))} /></div>}
     <div className="krl">{ks.map((k, i) => <KrRow key={k.id} k={k} p={p} onOpen={onKr} color={ks.length > 1 ? splitColor(i) : undefined} />)}{!ks.length && !kids.length && <p className="note">No key results yet.</p>}</div>
-    {kids.length > 0 && <div style={{ marginTop: 6 }}><div className="row" style={{ gap: 10 }}><button className="linkbtn" onClick={() => setOpen(!open)}>{open ? '▾ Hide' : '▸ Show'} {kids.length} objective{kids.length > 1 ? 's' : ''} below</button>{kids.length > 1 && <div style={{ flex: 1 }}><WeightSplit compact label="split" parts={kids.map(c => ({ name: c.text, w: c.weight_to_parent }))} /></div>}</div>
+    {kids.length > 0 && <div style={{ marginTop: 6 }}><div className="row" style={{ gap: 10 }}><button className="linkbtn" onClick={() => setOpen(!open)}>{open ? '▾ Hide' : '▸ Show'} {kids.length} objective{kids.length > 1 ? 's' : ''} below</button>{kids.length > 1 && !line && <div style={{ flex: 1 }}><WeightSplit compact label="split" parts={kids.map(c => ({ name: c.text, w: c.weight_to_parent }))} /></div>}</div>
       {open && <div className="kids">{kids.map(c => <ObjCard key={c.id} o={c} p={p} onKr={onKr} depth={depth + 1} extra={extra} />)}</div>}</div>}
   </div>;
 }
@@ -224,11 +224,11 @@ function PlanFeeds({ db, unit, p, onKr }: { db: DB; unit: string; p: Period; onK
 }
 
 export function GoalsMap() {
-  const { db, unit } = useData(); const [kr, setKr] = useState<string | null>(null); const [p, setP] = usePeriod(); const [lvl, setLvl] = useState<'all' | 'off'>('all'); const [q, setQ] = useState('');
+  const { db, unit, line } = useData(); const [kr, setKr] = useState<string | null>(null); const [p, setP] = usePeriod(); const [lvl, setLvl] = useState<'all' | 'off'>('all'); const [q, setQ] = useState('');
   if (!db || !unit) return <Page title="Strategy map"><Empty>No unit selected.</Empty></Page>;
-  const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit);
+  const tree = unitGoalsTree(db, unit); const loose = unlinked(db, unit).filter(o => !line || line.objs.has(o.id));
   const hit = (o: Row): boolean => !q || o.text.toLowerCase().includes(q.toLowerCase()) || krsOf(db, o.id).some(k => k.title.toLowerCase().includes(q.toLowerCase())) || (byId(db.org_units, o.org_unit_id)?.name || '').toLowerCase().includes(q.toLowerCase()) || childObjectives(db, o.id).some(hit);
-  const show = (o: Row) => (lvl === 'all' || (objState(db, o, p).tone === 'bad')) && hit(o);
+  const show = (o: Row) => (lvl === 'all' || (objState(db, o, p).tone === 'bad')) && hit(o) && (!line || line.objs.has(o.id));
   return <Page title="Strategy map" desc="Pillar → strategic goal → objectives → key results, with progress for the period you choose." help={<>
     <h3>Reading the map</h3><ul><li><b>Pillar</b> (black band) → the unit's own <b>strategic goal</b> (↗ shows the Group goal it serves) → <b>objectives</b> with their score ring → <b>key results</b>.</li>
       <li>Every figure is for the period chosen at the top — a month, quarter, half or the year — against that period's target, not the annual total.</li>
@@ -238,9 +238,9 @@ export function GoalsMap() {
     <Cmd right={<><input type="text" placeholder="Search objectives, key results, departments" value={q} onChange={e => setQ(e.target.value)} /><Seg value={lvl} options={[['all', 'All'], ['off', 'Off track only']]} onChange={setLvl} /><PeriodPicker value={p} onChange={setP} /></>} />
     {!tree.length && !loose.length && <Empty>No strategy or OKRs loaded for this unit yet.</Empty>}
     <PlanFeeds db={db} unit={unit} p={p} onKr={setKr} />
-    {tree.map(({ p: pil, goals }) => <section className="pil" key={pil.id}>
+    {tree.filter(({ goals }) => !line || goals.some(g => topObjectives(db, g.id).some(show))).map(({ p: pil, goals }) => <section className="pil" key={pil.id}>
       <div className="pilh">{pil.code} · {pil.name}<span className="sp" /><small>{pct(pillarScore(db, pil.id, p))}</small></div>
-      {goals.map(g => { const os = topObjectives(db, g.id).filter(show); const gg = byId(db.group_goals, g.group_goal_id);
+      {goals.map(g => { const os = topObjectives(db, g.id).filter(show); const gg = byId(db.group_goals, g.group_goal_id); if (line && !os.length) return null;
         return <div className="goal" key={g.id}><div className="goalh"><Ring p={goalScore(db, g.id, p)} size={34} />{g.code} {g.name}{gg && <span className="gg">↗ Group {gg.code} {gg.name}</span>}</div>
           {os.map(o => <ObjCard key={o.id} o={o} p={p} onKr={setKr} />)}{!os.length && <p className="note">{lvl === 'off' ? 'Nothing off track.' : 'No objectives yet.'}</p>}</div>; })}
     </section>)}
@@ -357,10 +357,10 @@ export function GroupView() {
 
 /** INSIGHTS — Key result follow-up: every key result with the deliverables and weekly activities that drive it. */
 export function KrFollowUp() {
-  const { db, unit } = useData(); const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [q, setQ] = useState(''); const [show, setShow] = useState<'all' | 'linked' | 'none' | 'risk'>('all'); const [kr, setKr] = useState<string | null>(null);
+  const { db, unit, line } = useData(); const [p, setP] = usePeriod(); const [org, setOrg] = useState(''); const [q, setQ] = useState(''); const [show, setShow] = useState<'all' | 'linked' | 'none' | 'risk'>('all'); const [kr, setKr] = useState<string | null>(null);
   if (!db || !unit) return null;
   const sub = org ? subtreeIds(db, org) : null;
-  const rows = db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && o.status !== 'Archived' && (!sub || sub.has(o.org_unit_id)))
+  const rows = db.objectives.filter(o => o.unit_id === unit && o.level !== 'individual' && o.status !== 'Archived' && (!sub || sub.has(o.org_unit_id)) && (!line || line.orgs.has(o.org_unit_id)))
     .flatMap(o => krsOf(db, o.id).map(k => ({ k, o, s: krState(db, k, p), d: krDrivers(db, k.id) })))
     .filter(r => !q || (r.k.title + ' ' + r.o.text).toLowerCase().includes(q.toLowerCase()))
     .filter(r => show === 'all' || (show === 'linked' ? r.d.acts.length > 0 : show === 'none' ? !r.d.dels.length && !r.d.acts.length : r.d.stuck > 0 || r.s.tone === 'bad'));

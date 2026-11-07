@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useData, byId, type DB, type Row } from '../lib/data';
-import { orgScore, personResult, krState, pct, money, planBy, actualBy, lastActualMonth, krsOf, weekStart, ymd, MONTHS, bandOf, currentPeriod, periodLabel, workStats, delivScore, subtreeIds, curMonth, incomeStatement, cashFlow, sum, IS_KEY, linesOf, type Period } from '../lib/calc';
+import { orgScore, orgScoreOwn, personResult, krState, pct, money, planBy, actualBy, lastActualMonth, krsOf, weekStart, ymd, MONTHS, bandOf, currentPeriod, periodLabel, workStats, delivScore, subtreeIds, curMonth, incomeStatement, cashFlow, sum, IS_KEY, linesOf, type Period } from '../lib/calc';
 import { Page, UnitPicker, Pill, Bar, Ring, BarChart, LineChart, StatusStack, usePeriod, PeriodPicker, StatePill, Seg } from '../lib/ui';
 import { planStatus } from './OkrPlan';
 import { openRescope } from './AnnualPlan';
@@ -69,15 +69,17 @@ export function Financial({ db, units, label }: { db: DB; units: string[]; label
   </div>;
 }
 
-export function Operational({ db, unit, p }: { db: DB; unit: string; p: Period }) {
-  const krs = unitKrs(db, unit); const ids = subtreeIds(db, unit); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id));
+export function Operational({ db, unit: unit0, p }: { db: DB; unit: string; p: Period }) {
+  // department/division heads and team members see their own organisation and below, not the whole unit
+  const { line, me } = useData(); const unit = line && me ? me.org_unit_id : unit0;
+  const krs = line ? subtreeKrs(db, unit) : unitKrs(db, unit); const ids = subtreeIds(db, unit); const pos = new Set(db.positions.filter(x => ids.has(x.org_unit_id)).map(x => x.id));
   const wk = ymd(weekStart(new Date())); const ws = workStats(db, pos, wk); const dm = delivScore(db, pos, p);
-  const trend = Array.from({ length: curMonth() }, (_, i) => orgScore(db, unit, { t: 'M', n: i + 1 }));
+  const sco = (pp: Period) => line ? orgScoreOwn(db, unit, pp) : orgScore(db, unit, pp); const trend = Array.from({ length: curMonth() }, (_, i) => sco({ t: 'M', n: i + 1 }));
   const behind = krs.map(k => ({ k, s: krState(db, k, p) })).filter(x => x.s.tone === 'bad').sort((a, b) => (a.s.ratio ?? 0) - (b.s.ratio ?? 0)).slice(0, 6);
   const nav = useNavigate();
-  return <div className="card"><div className="row"><h2 style={{ flex: 1 }}>Operational performance</h2><Link to="/insights/reports?tab=okr">Reports →</Link></div>
+  return <div className="card"><div className="row"><h2 style={{ flex: 1 }}>Operational performance{line ? ` · ${byId(db.org_units, unit)?.name}` : ''}</h2><Link to={line ? '/insights/reports?tab=monthly' : '/insights/reports?tab=okr'}>Reports →</Link></div>
     <div className="kpis" style={{ marginTop: 10 }}>
-      <div className="tile click" onClick={() => nav('/insights/performance')}><div className="row"><Ring p={orgScore(db, unit, p)} size={50} /><div><div className="tl">OKR score · {periodLabel(p)}</div><div className="ts">{db.objectives.filter(o => o.unit_id === unit && o.status !== 'Archived').length} objectives</div></div></div></div>
+      <div className="tile click" onClick={() => nav('/insights/performance')}><div className="row"><Ring p={sco(p)} size={50} /><div><div className="tl">OKR score · {periodLabel(p)}</div><div className="ts">{db.objectives.filter(o => (line ? ids.has(o.org_unit_id) : o.unit_id === unit) && o.status !== 'Archived').length} objectives</div></div></div></div>
       <div className="tile" style={{ gridColumn: 'span 2' }}><div className="tl" style={{ marginBottom: 6 }}>Key results · {periodLabel(p)} (pace-adjusted)</div><StatusStack counts={statusCounts(db, krs, p)} /></div>
       <div className="tile click" onClick={() => nav('/week')}><div className="tv">{pct(ws.completion)}</div><div className="tl">This week's work done</div><div className="ts">{ws.done}/{ws.total} activities · {ws.stuck} stuck</div></div>
       <div className="tile click" onClick={() => nav('/deliverables')}><div className="tv">{dm.due ? `${dm.accepted}/${dm.due}` : '—'}</div><div className="tl">Deliverables accepted · {periodLabel(p)}</div><div className="ts">{dm.done} waiting for acceptance</div></div>

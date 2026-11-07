@@ -104,9 +104,9 @@ function WorkReport({ db, us }: { db: DB; us: string[] }) {
 
 const DST: Record<string, [string, string]> = { planned: ['Planned', 'none'], done: ['Submitted', 'warn'], accepted: ['Accepted', 'good'], returned: ['Returned', 'bad'] };
 /** Monthly work: every deliverable of the chosen months, line by line, with totals. */
-function MonthlyReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
+function MonthlyReport({ db, us, p, people: only }: { db: DB; us: string[]; p: Period; people?: Set<string> }) {
   const [q, setQ] = useState(''); const [st, setSt] = useState(''); const [by, setBy] = useState<'line' | 'person'>('line');
-  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name).map(x => x.id)); const ms = periodMonths(p); const cm = curMonth();
+  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name && (!only || only.has(x.id))).map(x => x.id)); const ms = periodMonths(p); const cm = curMonth();
   const all = db.deliverables.filter(d => pos.has(d.owner_position_id) && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
   const list = all.filter(d => (!st || d.status === st) && (!q || (d.title + ' ' + (byId(db.positions, d.owner_position_id)?.holder_name || '')).toLowerCase().includes(q.toLowerCase())))
     .sort((a, b) => a.month - b.month || (byId(db.positions, a.owner_position_id)?.holder_name || '').localeCompare(byId(db.positions, b.owner_position_id)?.holder_name || ''));
@@ -140,9 +140,9 @@ function MonthlyReport({ db, us, p }: { db: DB; us: string[]; p: Period }) {
 
 const AST: Record<string, string> = { Done: 'good', 'In progress': 'warn', Stuck: 'bad', Delayed: 'bad', 'Not started': 'none' };
 /** Weekly work: every activity of the chosen week, line by line, with totals and the 8-week trend. */
-function WeeklyReport({ db, us }: { db: DB; us: string[] }) {
+function WeeklyReport({ db, us, people: only }: { db: DB; us: string[]; people?: Set<string> }) {
   const [ws, setWs] = useState(ymd(weekStart(new Date()))); const [q, setQ] = useState(''); const [st, setSt] = useState(''); const [by, setBy] = useState<'line' | 'person'>('line');
-  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name).map(x => x.id));
+  const pos = new Set(db.positions.filter(x => us.includes(x.unit_id) && x.holder_name && (!only || only.has(x.id))).map(x => x.id));
   const all = db.activities.filter(a => pos.has(a.owner_position_id) && a.week_start === ws);
   const list = all.filter(a => (!st || a.status === st) && (!q || (a.title + ' ' + (byId(db.positions, a.owner_position_id)?.holder_name || '')).toLowerCase().includes(q.toLowerCase())))
     .sort((a, b) => (byId(db.positions, a.owner_position_id)?.holder_name || '').localeCompare(byId(db.positions, b.owner_position_id)?.holder_name || ''));
@@ -170,7 +170,7 @@ function WeeklyReport({ db, us }: { db: DB; us: string[] }) {
       {people.map(x => <tr key={x.id}><td>{name(x.id)}<div className="mini">{byId(db.org_units, byId(db.positions, x.id)?.org_unit_id)?.name}</div></td><td className="n">{x.total}</td><td className="n">{x.done}</td><td className="n">{x.stuck}</td><td><Bar p={x.completion} /> {pct(x.completion)}</td><td>{x.onTime ? <Pill tone="good">yes</Pill> : <Pill tone="warn">no</Pill>}</td></tr>)}
       <tr className="g"><td><b>Total</b></td><td className="n"><b>{s0.total}</b></td><td className="n">{s0.done}</td><td className="n">{s0.stuck}</td><td><Bar p={s0.completion} /> {pct(s0.completion)}</td><td>{s0.onTime}/{s0.people}</td></tr>
     </tbody></table></div>}
-    <WorkReport db={db} us={us} />
+    {!only && <WorkReport db={db} us={us} />}
   </>;
 }
 
@@ -317,11 +317,11 @@ function CosBreakdown({ db, us, months, name }: { db: DB; us: string[]; months: 
 }
 
 export default function Reports() {
-  const { db, unit, can, units, allUnits, setAllUnits } = useData(); const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') || 'summary'; const [p, setP] = usePeriod();
+  const { db, unit, can, units, allUnits, setAllUnits, line, me } = useData(); const [sp, setSp] = useSearchParams(); const tab0 = sp.get('tab') || (line ? 'monthly' : 'summary'); const tab = line && !['monthly', 'weekly'].includes(tab0) ? 'monthly' : tab0; const [p, setP] = usePeriod();
   if (!db || !unit) return null;
   const scope = can('seeGroup') && allUnits ? 'group' : 'unit';
   const us = scope === 'group' ? units.map(u => u.id) : [unit]; const name = scope === 'group' ? 'All units combined' : byId(db.org_units, unit)?.name || '';
-  const tabs: [string, string][] = [['summary', 'Summary'], ['okr', 'OKRs & goals'], ['org', 'Organisation & people'], ['monthly', 'Monthly deliverables'], ['weekly', 'Weekly activities'], ['fin', 'Financial']];
+  const tabs: [string, string][] = line ? [['monthly', 'Monthly deliverables'], ['weekly', 'Weekly activities']] : [['summary', 'Summary'], ['okr', 'OKRs & goals'], ['org', 'Organisation & people'], ['monthly', 'Monthly deliverables'], ['weekly', 'Weekly activities'], ['fin', 'Financial']];
   return <Page title="Reports" desc="Operational, OKR, organisational, work and financial performance — for one unit or all units combined." help={<>
     <p><b>Summary</b> — each unit's OKR score, key-result status, revenue and budget use, deliverables and average person result for the period.</p>
     <p><b>OKRs & goals</b> — score by quarter and pillar, then every goal, objective or key result with target, actual and status (pace-adjusted while a period is running).</p>
@@ -334,8 +334,9 @@ export default function Reports() {
     {tab === 'summary' && <Summary db={db} us={us} p={p} />}
     {tab === 'okr' && <OkrReport db={db} us={us} p={p} />}
     {tab === 'org' && <OrgReport db={db} us={us} p={p} />}
-    {(tab === 'monthly' || tab === 'work') && <MonthlyReport db={db} us={us} p={p} />}
-    {tab === 'weekly' && <WeeklyReport db={db} us={us} />}
+    {line && <p className="note" style={{ marginBottom: 8 }}>Showing {byId(db.org_units, me?.org_unit_id)?.name} and the organisations below it.</p>}
+    {(tab === 'monthly' || tab === 'work') && <MonthlyReport db={db} us={us} p={p} people={line?.people} />}
+    {tab === 'weekly' && <WeeklyReport db={db} us={us} people={line?.people} />}
     {tab === 'fin' && (us.some(u => db.plan_lines.some(l => l.unit_id === u) || db.actuals.some(a => a.unit_id === u)) ? <Financial db={db} us={us} name={name} /> : <Empty>{name} has no revenue or budget plan, so there is no financial report for it.{can('seeGroup') && <> <button className="btn sm pri" onClick={() => setAllUnits(true)}>See all units combined</button></>}</Empty>)}
   </Page>;
 }

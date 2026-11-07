@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { sb, fetchAll } from './supabase';
-import { setCalendar } from './calc';
+import { setCalendar, lineScope, type LineScope } from './calc';
 
 export const TABLES = ['org_units', 'positions', 'profiles', 'app_settings', 'group_pillars', 'group_goals', 'unit_pillars', 'unit_goals', 'objectives', 'key_results', 'kr_targets', 'kr_plan_links', 'check_ins',
   'projects', 'plan_lines', 'actuals', 'cash_items', 'cash_values', 'activity_plan_lines', 'funds', 'need_priority', 'plan_status', 'rescopes', 'deliverables', 'activities', 'scorecards', 'scorecard_items', 'kpis', 'kpi_values', 'comments', 'notifications', 'position_claims', 'kr_month_targets', 'strategy_statements', 'week_reviews', 'messages', 'pmo_projects', 'cash_actual', 'cash_weekly', 'fund_months', 'need_schedule', 'need_plan', 'pmo_progress', 'project_phases', 'deliverable_files'] as const;
@@ -29,6 +29,8 @@ type Ctx = {
   db: DB | null; loading: boolean; error: string | null; user: any; reload: (tables?: string[]) => Promise<void>;
   allUnits: boolean; setAllUnits: (v: boolean) => void; me: Row | null; myPositions: Row[]; role: Role; can: (cap: string) => boolean; viewAs: string | null; setViewAs: (id: string | null) => void;
   unit: string | null; setUnit: (id: string) => void; units: Row[]; toast: (m: string) => void; toastMsg: string | null;
+  /** department/division heads and team members: what their line may see; null = unit-wide or Group roles */
+  line: LineScope | null;
 };
 const C = createContext<Ctx>(null as any);
 export const useData = () => useContext(C);
@@ -82,7 +84,8 @@ export function DataProvider({ user, children }: { user: any; children: ReactNod
   const setAllUnits = (v: boolean) => { setAllSel(v); try { localStorage.setItem('wbg.scope', v ? 'all' : 'unit'); } catch { /* ignore */ } };
   const toast = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2600); }, []);
 
-  return <C.Provider value={{ db, loading, error, user, reload, me, myPositions, role, can, viewAs, setViewAs, unit, setUnit, units, toast, toastMsg, allUnits, setAllUnits }}>{children}</C.Provider>;
+  const line = useMemo(() => db ? lineScope(db, me, role) : null, [db, me, role]);
+  return <C.Provider value={{ line, db, loading, error, user, reload, me, myPositions, role, can, viewAs, setViewAs, unit, setUnit, units, toast, toastMsg, allUnits, setAllUnits }}>{children}</C.Provider>;
 }
 
 /** Write helper: run a Supabase call, toast errors, reload the touched tables. */
