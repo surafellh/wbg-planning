@@ -242,7 +242,7 @@ function CashMonthly() {
     { key: 'closing', label: 'Closing bank balance', type: 'number', width: 160, tip: 'Leave empty to calculate it as opening + in − out.' }];
   async function doSave() {
     setBusy(true); const rows = d.all.filter(r => r._dirty).map(r => ({ unit_id: unit, fiscal_year: '2026/27', month: Number(r.id), opening: r.opening, inflow: r.inflow, outflow: r.outflow, closing: r.closing ?? (r.opening != null ? Number(r.opening) + Number(r.inflow || 0) - Number(r.outflow || 0) : null), source: 'Entered in the app' }));
-    await save(() => sb.from('cash_actual').upsert(rows, { onConflict: 'unit_id,fiscal_year,month' }), ['cash_actual'], 'Cash actuals saved'); setBusy(false);
+    await save(() => sb.from('cash_actual').upsert(rows, { onConflict: 'unit_id,fiscal_year,month,space' }), ['cash_actual'], 'Cash actuals saved'); setBusy(false);
   }
   return <div className="stack"><p className="note">Month-end bank position. This is the actual line in the cash flow report and the "Closing cash" metric.</p><Sheet cols={cols} rows={d.rows} onChange={d.change} /><SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></div>;
 }
@@ -257,7 +257,7 @@ function CashWeekly() {
     { key: 'net', label: 'Net actual', type: 'ro', width: 120, fmt: (_, r) => r.ain != null || r.aout != null ? money(Number(r.ain || 0) - Number(r.aout || 0)) : '' }];
   async function doSave() {
     setBusy(true); const rows = d.all.filter(r => r._dirty).flatMap(r => [{ unit_id: unit, week_start: r.id, direction: 'in', planned: r.pin, actual: r.ain }, { unit_id: unit, week_start: r.id, direction: 'out', planned: r.pout, actual: r.aout }]);
-    await save(() => sb.from('cash_weekly').upsert(rows, { onConflict: 'unit_id,week_start,direction' }), ['cash_weekly'], 'Weekly cash saved'); setBusy(false);
+    await save(() => sb.from('cash_weekly').upsert(rows, { onConflict: 'unit_id,week_start,direction,space' }), ['cash_weekly'], 'Weekly cash saved'); setBusy(false);
   }
   return <div className="stack"><div className="row"><p className="note" style={{ flex: 1 }}>Weekly cash plan and actual, as in the weekly tracker. Shown in Reports → Financial → Weekly cash.</p><select value={m} onChange={e => setM(Number(e.target.value))} aria-label="Month">{MONTHS.map((x, i) => <option key={x} value={i + 1}>{x}</option>)}</select></div>
     <Sheet cols={cols} rows={d.rows} onChange={d.change} /><SaveBar dirty={d.dirty} onSave={doSave} onDiscard={d.reset} busy={busy} /></div>;

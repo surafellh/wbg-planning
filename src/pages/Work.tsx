@@ -83,7 +83,7 @@ export function WeekReview({ me, wk, mine }: { me: Row; wk: string; mine: boolea
   const r = db?.week_reviews.find(x => x.position_id === me.id && x.week_start === wk) || {} as Row;
   const [f, setF] = useState<Row>({ wins: r.wins || '', blockers: r.blockers || '', asks: r.asks || '' });
   if (!db) return null;
-  const put = (patch: Row, msg: string) => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, ...f, ...patch }, { onConflict: 'position_id,week_start' }), ['week_reviews'], msg);
+  const put = (patch: Row, msg: string) => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, ...f, ...patch }, { onConflict: 'position_id,week_start,space' }), ['week_reviews'], msg);
   return <div className="card stack"><div className="row"><h3 style={{ flex: 1 }}>Week summary</h3>{r.submitted_at ? <Pill tone="good">Submitted {r.submitted_at.slice(5, 16).replace('T', ' ')}</Pill> : <Pill tone="warn">Not submitted</Pill>}</div>
     {(['wins', 'blockers', 'asks'] as const).map(k => <label key={k} className="f">{({ wins: 'Wins — what got done that matters', blockers: 'Blockers — what slowed us', asks: 'Asks — help or decisions needed' })[k]}<textarea rows={2} value={f[k]} disabled={!mine} onChange={e => setF({ ...f, [k]: e.target.value })} /></label>)}
     {mine && <div className="row end"><button className="btn" onClick={() => put({}, 'Saved')}>Save</button><button className="btn pri" onClick={() => put({ submitted_at: new Date().toISOString() }, 'Week submitted to your manager').then(() => notifyPositions(db, [managerOf(db, me)?.id], 'week', `${me.holder_name} submitted the week summary`, '/inbox'))}>Submit week</button></div>}
@@ -95,7 +95,7 @@ function FeedbackBox({ me, wk, r, userId }: { me: Row; wk: string; r: Row; userI
   const save = useSave(); const { db } = useData(); const useDataDb = { current: db }; const [fb, setFb] = useState(r.feedback || ''); const [rt, setRt] = useState<number>(r.rating || 0);
   return <div className="stack"><label className="f">Feedback to {me.holder_name}<textarea rows={2} value={fb} onChange={e => setFb(e.target.value)} /></label>
     <div className="row"><span className="mini">Rating</span>{[1, 2, 3, 4, 5].map(n => <button key={n} className={'btn sm' + (rt >= n ? ' pri' : '')} onClick={() => setRt(n)}>★</button>)}<span className="sp" />
-      <button className="btn sm pri" onClick={() => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, feedback: fb || null, rating: rt || null, feedback_by: userId, feedback_at: new Date().toISOString() }, { onConflict: 'position_id,week_start' }), ['week_reviews'], 'Feedback sent').then(() => notifyPositions(useDataDb.current!, [me.id], 'feedback', `Feedback on your week ${rt ? '★'.repeat(rt) : ''}`, '/week', fb || undefined))}>Send feedback</button></div></div>;
+      <button className="btn sm pri" onClick={() => save(() => sb.from('week_reviews').upsert({ position_id: me.id, unit_id: me.unit_id, week_start: wk, feedback: fb || null, rating: rt || null, feedback_by: userId, feedback_at: new Date().toISOString() }, { onConflict: 'position_id,week_start,space' }), ['week_reviews'], 'Feedback sent').then(() => notifyPositions(useDataDb.current!, [me.id], 'feedback', `Feedback on your week ${rt ? '★'.repeat(rt) : ''}`, '/week', fb || undefined))}>Send feedback</button></div></div>;
 }
 
 export function MyWeek({ who, ws, setWs }: { who: Row; ws: Date; setWs: (d: Date) => void }) {

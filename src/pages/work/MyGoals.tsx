@@ -1,9 +1,9 @@
 /* WORK WINDOW — My goals: only what the person owns, simple updates, and a guided "new objective" flow. */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useData, useSave, useTerms, byId, posName, notifyPositions, managerOf, type DB, type Row } from '../../lib/data';
 import { sb } from '../../lib/supabase';
-import { krState, objScore, krsOf, currentPeriod, periodLabel, pct, fmt, curMonth, qOfMonth, MONTHS, type Period } from '../../lib/calc';
+import { krState, objScore, krsOf, currentPeriod, periodLabel, pct, fmt, curMonth, qOfMonth, MONTHS, subtreeIds, type Period } from '../../lib/calc';
 import { HowItWorks, Bar, Pill, Modal, NumIn, StatePill, Empty } from '../../lib/ui';
 import { Thread } from '../../lib/social';
 
@@ -81,6 +81,28 @@ function KrOnly({ k, p }: { k: Row; p: Period }) {
 
 /* ---------------- guided new objective ---------------- */
 type KrDraft = { id?: string; title: string; kind: string; base: number | null; target: number | null; uom: string; when: 'quarter' | 'year'; weight?: number | null };
+
+/** OKRs loaded from the ERP wait in a library. They are not active until the owner adopts one — then it becomes a normal draft to adjust, link and send. */
+function ErpLibrary() {
+  const { db, me, role, reload } = useData(); const { t } = useTerms(); const nav = useNavigate();
+  const [rows, setRows] = useState<Row[] | null>(null); const [open, setOpen] = useState(false); const [busy, setBusy] = useState('');
+  useEffect(() => { let on = true; sb.from('okr_library').select('id,text,level,org_unit_id,owner_position_id,krs').order('sort').then(r => { if (on) setRows(r.data || []); }); return () => { on = false; }; }, []);
+  if (!db || !me || !rows) return null;
+  const mine = new Set(role === 'employee' ? [me.org_unit_id] : subtreeIds(db, me.org_unit_id));
+  const adopted = new Set(db.objectives.map(o => o.library_id).filter(Boolean));
+  const avail = rows.filter(r => !adopted.has(r.id) && (role === 'employee' ? r.owner_position_id === me.id : mine.has(r.org_unit_id)));
+  if (!avail.length) return null;
+  async function adopt(id: string) {
+    setBusy(id); const { data, error } = await sb.rpc('adopt_okr', { lib: id }); setBusy('');
+    if (error) { alert(error.message); return; }
+    await reload(['objectives', 'key_results']); nav('/goals/new?edit=' + data);
+  }
+  return <div className="lcard" style={{ marginBottom: 12 }}>
+    <div className="row" style={{ justifyContent: 'space-between' }}><div><b>Start from an {t('objective').toLowerCase()} loaded from the ERP</b><p className="note" style={{ margin: 0 }}>{avail.length} waiting for you. Nothing counts until you pick one and send it.</p></div><button className="btn sm" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show'}</button></div>
+    {open && <div className="choices" style={{ marginTop: 8 }}>{avail.map(r => <div key={r.id} className="choice" style={{ display: 'flex', gap: 10, alignItems: 'center' }}><span style={{ flex: 1 }}><b>{r.text}</b><small>{byId(db.org_units, r.org_unit_id)?.name} · {(r.krs || []).length} {t('key_result', true).toLowerCase()}</small></span><button className="btn sm pri" disabled={!!busy} onClick={() => adopt(r.id)}>{busy === r.id ? '…' : 'Use this'}</button></div>)}</div>}
+  </div>;
+}
+
 export function NewObjective() {
   const { db, me, role, user } = useData(); const save = useSave(); const { t } = useTerms(); const nav = useNavigate();
   const editId = new URLSearchParams(location.search).get('edit'); const ex = editId && db ? byId(db.objectives, editId) : null;
@@ -120,6 +142,7 @@ export function NewObjective() {
   const mgr = managerOf(db, me);
   return <div className="light narrow">
     <div className="lhead"><div><h1>{ex ? 'Edit' : 'New'} {t('objective').toLowerCase()}</h1><p>Step {step} of 4</p></div><Link to="/goals" className="btn">Cancel</Link></div>
+    {!ex && <ErpLibrary />}
     <div className="steps">{['What it supports', `Your ${t('objective').toLowerCase()}`, 'How you will measure it', 'Check and send'].map((l, i) => <div key={l} className={'step' + (step === i + 1 ? ' on' : step > i + 1 ? ' done' : '')}><i>{step > i + 1 ? '✓' : i + 1}</i>{l}</div>)}</div>
     {step === 1 && <div className="lcard stack">
       <h2>What will this help achieve?</h2><p className="note">Pick the {t('objective').toLowerCase()} or {t('key_result').toLowerCase()} of your team or department that your work moves forward. This is how your work adds up to the strategy.</p>
