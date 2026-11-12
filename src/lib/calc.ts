@@ -165,7 +165,7 @@ export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 
   if (e <= 0) { const r0: KrState = { target: k.measure === 'manual' ? krTarget(db, k, p) : null, actual: null, progress: null, ratio: null, expected: 0, label: 'Not started', tone: 'none', toDate: false }; db.cache.set(ck, r0); return r0; }
   if (k.measure === 'children') {
     const kids = db.objectives.filter(o => o.parent_kr_id === k.id);
-    progress = kids.length && depth < 8 ? weighted(kids.map(o => [Number(o.weight_to_parent) || 1, objScore(db, o, p, depth + 1)])) : null; toDate = true;
+    progress = kids.length && depth < 8 ? dueWeighted(db, kids.map(o => [Number(o.weight_to_parent) || 1, objScore(db, o, p, depth + 1)]), p) : null; toDate = true;
   } else if (k.measure === 'deliverables') {
     const cm = curMonth();
     const ds = db.deliverables.filter(d => d.key_result_id === k.id && ms.includes(d.month) && !['removed', 'transferred'].includes(d.status));
@@ -176,7 +176,14 @@ export function krState(db: DB, k: Row, p: Period = currentPeriod('Q'), depth = 
     const l = db.kr_plan_links.find(x => x.kr_id === k.id); const u = unitOfObjective(db, k.objective_id);
     if (l && u) { const last = lastActualMonth(db, u); const done = ms.filter(m => m <= last); target = planBy(db, u, l.section, ms, l.line_groups, false, l.metric); actual = done.length ? actualBy(db, u, l.section, done, l.line_groups, l.metric) : null; const t2 = done.length ? (p.full ? target : planBy(db, u, l.section, done, l.line_groups, false, l.metric)) : null; progress = ratioFor(k, actual, t2); toDate = true; }
   } else { target = krTarget(db, k, p); actual = krActual(db, k, p); progress = ratioFor(k, actual, target); }
-  const st = statusFor(db, progress, k.confidence, e, toDate);
+  // Pace: a running-level ("latest") key result builds up over the whole year, so the share expected by now is the fiscal months
+  // passed over the months its target covers (period end; the whole year when only a year target without baseline is set).
+  let pace = e;
+  if (!toDate && aggOf(k) === 'latest' && dirOf(k) !== 'maintain' && e > 0 && e < 1) {
+    const now = ms[0] - 1 + e * ms.length; const end = (k.baseline != null || k.target_mode === 'monthly' || db.kr_targets.some(t => t.kr_id === k.id)) ? ms[ms.length - 1] : 12;
+    pace = Math.min(1, now / end);
+  }
+  const st = statusFor(db, progress, k.confidence, pace, toDate);
   const r: KrState = { target, actual, progress, expected: e, toDate, ...st };
   db.cache.set(ck, r); return r;
 }
@@ -194,6 +201,12 @@ export function statusFor(db: DB, progress: number | null, conf: string | null |
 export function krProgress(db: DB, k: Row, p?: Period) { return krState(db, k, p).progress; }
 export function statusOf(p: number | null, conf: string | null | undefined, db: DB): [string, 'good' | 'warn' | 'bad' | 'none'] { const s = statusFor(db, p, conf, 1, true); return [s.label, s.tone]; }
 export function bandOf(p: number | null, db: DB) { if (p == null) return '—'; const bands = (db.settings.bands || []) as { name: string; min: number }[]; for (const b of bands) if (p * 100 >= b.min) return b.name; return bands.length ? bands[bands.length - 1].name : '—'; }
+/** Roll-up rule: once the period is under way (past the grace share), an item with no update counts as 0 — it is due but not
+    reported, so it must pull the score down rather than be left out. Before that, items without data are left out.
+    All items without data → null ("No update"). */
+export function graceOver(db: DB, p: Period) { const g = Number((db.settings.status_method || {}).grace_pct ?? 15); return elapsed(p) * 100 >= g; }
+export function dueWeighted(db: DB, items: [number, number | null][], p: Period) { if (!items.some(x => x[1] != null)) return null; return weighted(graceOver(db, p) ? items.map(([w, v]) => [w, v ?? 0] as [number, number]) : items); }
+export function dueAvg(db: DB, vals: (number | null)[], p: Period) { return dueWeighted(db, vals.map(v => [1, v] as [number, number | null]), p); }
 export function weighted(items: [number, number | null][]) { const ok = items.filter(x => x[1] != null) as [number, number][]; if (!ok.length) return null; const w = sum(ok.map(x => x[0])); return w ? sum(ok.map(x => x[0] * Math.min(1, x[1]))) / w : null; }
 
 // ---------------- objectives, organisation, people ----------------
@@ -201,8 +214,8 @@ export function weighted(items: [number, number | null][]) { const ok = items.fi
 export function objScore(db: DB, o: Row, p: Period = currentPeriod('Q'), depth = 0): number | null {
   const ck = `o${o.id}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
   let v: number | null; const ks = krsOf(db, o.id); const kids = depth < 8 ? childObjectives(db, o.id).filter(c => c.level !== 'individual') : [];
-  const own = ks.length ? weighted(ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress])) : null;
-  const below = kids.length ? weighted(kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)])) : null;
+  const own = ks.length ? dueWeighted(db, ks.map(k => [Number(k.weight) || 1, krState(db, k, p, depth).progress]), p) : null;
+  const below = kids.length ? dueWeighted(db, kids.map(c => [Number(c.weight_to_parent) || 1, objScore(db, c, p, depth + 1)]), p) : null;
   // An objective with both its own key results and objectives below blends them by its "own share" (default 50%).
   if (own != null && below != null) { const w = ownShare(db, o) / 100; v = w * own + (1 - w) * below; } else v = own ?? below;
   db.cache.set(ck, v); return v;
@@ -215,14 +228,13 @@ export function objState(db: DB, o: Row, p: Period = currentPeriod('Q')) { const
 export function orgScore(db: DB, orgId: string | null | undefined, p: Period = currentPeriod('Q'), depth = 0): number | null {
   if (!orgId || depth > 6) return null;
   const ck = `g${orgId}${pkey(p)}`; if (db.cache.has(ck)) return db.cache.get(ck);
-  const vals = db.objectives.filter(o => o.org_unit_id === orgId && o.level !== 'individual' && liveObj(o)).map(o => objScore(db, o, p)).filter(v => v != null) as number[];
-  let v: number | null = vals.length ? sum(vals) / vals.length : null;
+  let v: number | null = dueAvg(db, db.objectives.filter(o => o.org_unit_id === orgId && o.level !== 'individual' && liveObj(o)).map(o => objScore(db, o, p)), p);
   if (v == null) { const org = db.org_units.find(u => u.id === orgId); v = org ? orgScore(db, org.parent_id, p, depth + 1) : null; }
   db.cache.set(ck, v); return v;
 }
 /** Score from the org unit's own objectives only (null when it has none with data). */
 export const isOrgObj = (o: Row) => o.level !== 'individual' && o.status !== 'Archived';
-export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return avg(db.objectives.filter(o => o.org_unit_id === orgId && isOrgObj(o) && liveObj(o)).map(o => objScore(db, o, p))); }
+export function orgScoreOwn(db: DB, orgId: string, p: Period = currentPeriod('Q')) { return dueAvg(db, db.objectives.filter(o => o.org_unit_id === orgId && isOrgObj(o) && liveObj(o)).map(o => objScore(db, o, p)), p); }
 /** Whole-subtree score (unit with all its departments and divisions) — used for rankings. */
 /** Line scope for department heads, division heads and team members: the organisation they sit in and everything below it,
     plus the objectives above that their line delivers (not the sibling departments' objectives). null = no restriction. */
@@ -291,7 +303,7 @@ export function personResult(db: DB, pos: Row, p: Period = currentPeriod('Q')) {
     const own = db.objectives.filter(o => o.owner_position_id === pos.id && o.level === 'individual' && o.status !== 'Archived');
     const ks = db.key_results.filter(k => k.owner_position_id === pos.id && (k.state || 'active') === 'active' && !own.some(o => o.id === k.objective_id) && db.objectives.some(o => o.id === k.objective_id && o.status !== 'Archived'));
     const items: [number, number | null][] = [...own.map(o => [1, objScore(db, o, p)] as [number, number | null]), ...ks.map(k => [Number(k.weight) || 1, krState(db, k, p).progress] as [number, number | null])];
-    if (items.length) { personal = weighted(items); basis = `${ks.length} key results owned`; }
+    if (items.length) { personal = dueWeighted(db, items, p); basis = `${ks.length} key results owned`; }
   }
   if (!basis) basis = 'No personal items yet';
   const R = org == null && personal == null ? null : org == null ? personal : personal == null ? org : s * org + (1 - s) * personal;
