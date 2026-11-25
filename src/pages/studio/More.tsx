@@ -99,7 +99,7 @@ export function ResourcesMonthly() {
   async function doSave() {
     setBusy(true); let err: string | null = null;
     for (const r of d.all.filter(r => r._dirty)) { const row = { unit_id: unit, fiscal_year: '2026/27', need_key: r.key, plan_month: r.plan_month, pay_month: Number(r.pay_month), amount: r.amount, rank: r.rank, status: Number(r.pay_month) > r.plan_month && r.status === 'Scheduled' ? 'Deferred' : r.status };
-      const x = await sb.from('need_schedule').upsert(row, { onConflict: 'unit_id,fiscal_year,need_key,plan_month' }); err = err || x.error?.message || null; }
+      const x = await sb.from('need_schedule').upsert(row, { onConflict: 'unit_id,fiscal_year,need_key,plan_month,space' }); err = err || x.error?.message || null; }
     await save(() => Promise.resolve({ error: err }) as any, ['need_schedule'], 'Schedule saved'); setBusy(false);
   }
   const setFund = (k: 'confirmed' | 'expected', v: number | null) => save(() => sb.from('fund_months').upsert({ unit_id: unit, fiscal_year: '2026/27', month: m, confirmed: k === 'confirmed' ? v || 0 : funds.confirmed, expected: k === 'expected' ? v || 0 : funds.expected }), ['fund_months'], 'Funds updated');

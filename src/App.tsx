@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { sb } from './lib/supabase';
+import { sb, SPACE, setSpace } from './lib/supabase';
 import { DataProvider, ROLE_NAME, useData, useTerms, useWindows, moduleOn } from './lib/data';
 import { weekStart } from './lib/calc';
 import { Seg } from './lib/ui';
@@ -109,11 +109,13 @@ function Shell() {
       <div className="sbot">
         <div className="who"><b>{me.holder_name || me.title}</b>{me.title} · {ROLE_NAME[role]}</div>
         {isAdmin && <SeeAs />}
+        <button className="mod" onClick={() => setSpace(SPACE === 'demo' ? 'live' : 'demo')} title={SPACE === 'demo' ? 'Go back to the real planning space' : 'Open the practice space — nothing you enter there is real'}><Ico d="M5 4h14v12H5zM9 20h6M12 16v4" /><span>{SPACE === 'demo' ? 'Back to Live' : 'Open Demo'}</span></button>
         <button className="mod" onClick={() => sb.auth.signOut()}><Ico d="M15 12H4m0 0l4-4m-4 4l4 4M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5" /><span>Sign out</span></button>
       </div>
     </aside>
     <div className="mainw">
       <div className="topm"><button className="burger" onClick={() => setSide(true)} aria-label="Menu">☰</button><b>WBG Planning</b><span className="sp" /><Bell /></div>
+      {SPACE === 'demo' && <div className="banner warn" style={{ margin: '12px 28px 0' }}><b>Demo</b> — a practice copy to explain how the system works. Anything you enter here is not real and is kept apart from Live. <button className="btn sm" onClick={() => setSpace('live')}>Go to Live</button></div>}
       {viewAs && <div className="banner" style={{ margin: '12px 28px 0' }}>Previewing as <b>{me.holder_name || me.title}</b> ({ROLE_NAME[role]}). <button className="btn sm" onClick={() => setViewAs(null)}>Back to myself</button></div>}
       <Routes>
         <Route path="/" element={<Navigate to="/today" replace />} />
