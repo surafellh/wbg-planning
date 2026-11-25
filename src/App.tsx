@@ -7,6 +7,7 @@ import { Seg } from './lib/ui';
 import { Bell } from './lib/social';
 import Login from './pages/Login';
 import { ClaimScreen } from './pages/Claim';
+import { PillarMatrix } from './pages/PillarMatrix';
 import { GoalsMap, GoalsQuarter, GroupView, StrategyOverview, KrFollowUp } from './pages/Goals';
 import OkrPlan from './pages/OkrPlan';
 import { RevenuePlan, BudgetPlan } from './pages/AnnualPlan';
@@ -52,7 +53,7 @@ function useNavItems(win: Win): { label?: string; items: Item[] }[] {
     if (win === 'insights' && !W.fullInsights) return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.overview }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }] }];
     if (win === 'insights') return [{ items: [{ to: '/insights/me', label: 'My insights', icon: I.me }, { to: '/insights/plan', label: 'Strategic plan', icon: I.strategy }, { to: '/insights/overview', label: 'Overview', icon: I.overview }, { to: '/insights/map', label: 'Strategy map', icon: I.goals }, { to: '/insights/kr-followup', label: 'Key result follow-up', icon: I.deliv }] },
       { label: 'Performance', items: [{ to: '/insights/performance', label: 'Organisation', icon: I.perf }, { to: '/insights/people', label: 'People', icon: I.me }, ...(moduleOn(db, 'projects') ? [{ to: '/insights/projects', label: 'Projects', icon: I.plan }] : [])] },
-      { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }] : [])] }];
+      { label: 'Reports', items: [{ to: '/insights/reports', label: 'Reports', icon: I.reports }, ...(can('seeGroup') ? [{ to: '/insights/group', label: 'Group view', icon: I.strategy }, { to: '/insights/pillars', label: 'Pillar contribution', icon: I.strategy }] : [])] }];
     const f = (xs: (Item & { k: string })[]) => xs.filter(x => W.item(x.k));
     const g: { label?: string; items: Item[] }[] = [{ items: f([{ k: 'monitor', to: '/studio/monitor', label: 'Process monitor', icon: I.monitor }]) },
       { label: 'Plan', items: f([{ k: 'strategy', to: '/studio/strategy', label: 'Strategy builder', icon: I.strategy }, { k: 'okr', to: '/studio/okr', label: `${t('objective')} planner`, icon: I.goals }, { k: 'targets', to: '/studio/targets', label: 'Targets & progress', icon: I.plan }, { k: 'revenue', to: '/studio/revenue', label: 'Revenue plan', icon: I.money }, { k: 'budget', to: '/studio/budget', label: 'Budget', icon: I.money }, { k: 'resources', to: '/studio/resources', label: 'Resources & payments', icon: I.res }, { k: 'rescope', to: '/studio/rescope', label: 'Rescope & change requests', icon: I.plan }, { k: 'calendar', to: '/studio/calendar', label: 'Planning calendar', icon: I.week }]) },
@@ -145,6 +146,7 @@ function Shell() {
         <Route path="/insights/people" element={ok(W.fullInsights, <PerfPeople />)} />
         <Route path="/insights/reports" element={ok(W.fullInsights, <Reports />)} />
         <Route path="/insights/group" element={ok(W.fullInsights, <GroupView />)} />
+        <Route path="/insights/pillars" element={ok(W.fullInsights, <PillarMatrix />)} />
         <Route path="/insights/projects" element={ok(W.fullInsights, <Portfolio />)} />
         {/* Studio window */}
         <Route path="/studio" element={<Navigate to={'/studio/' + firstStudio} replace />} />
