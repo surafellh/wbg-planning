@@ -2,9 +2,9 @@ import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-/** Demo or Live: every request carries the space it belongs to; the database reads and writes only that space. Live is the default. */
+/** Demo or Live: every request carries the space it belongs to; the database reads and writes only that space. Demo is the default for now (Live opens with ?space=live or the switch in the menu). */
 export type Space = 'live' | 'demo';
-export const SPACE: Space = (() => { try { const q = new URLSearchParams(location.search).get('space'); if (q === 'demo' || q === 'live') localStorage.setItem('wbg.space', q); return localStorage.getItem('wbg.space') === 'demo' ? 'demo' : 'live'; } catch { return 'live'; } })();
+export const SPACE: Space = (() => { try { const q = new URLSearchParams(location.search).get('space'); if (q === 'demo' || q === 'live') localStorage.setItem('wbg.space', q); return localStorage.getItem('wbg.space') === 'live' ? 'live' : 'demo'; } catch { return 'demo'; } })();
 export function setSpace(s: Space) { try { localStorage.setItem('wbg.space', s); } catch { /* ignore */ } location.href = location.pathname.startsWith('/') ? '/today' : '/'; }
 export const sb = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true }, global: { headers: { 'x-space': SPACE } } });
 
